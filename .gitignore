@@ -1,0 +1,6 @@
+# Tide is a single static file — no build artifacts.
+.DS_Store
+Thumbs.db
+*.log
+node_modules/
+.wrangler/

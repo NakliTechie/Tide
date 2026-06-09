@@ -1,0 +1,1980 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Tide</title>
+  <meta name="description" content="A single-file, keyboard-first calendar over your Google Calendar. No server, no account, no telemetry. Your token never leaves your browser." />
+  <meta name="color-scheme" content="light dark" />
+  <!--
+    Content-Security-Policy.
+    script-src uses 'self' for the (future) external module and the pinned
+    Transformers.js CDN. The inline module below is authorised by its sha256
+    hash (see __CSP_SCRIPT_HASH__). Regenerate the hash if the script changes:
+        openssl dgst -sha256 -binary < script.js | openssl base64
+  -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'none';
+    base-uri 'self';
+    form-action 'none';
+    img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
+    font-src 'self';
+    style-src 'self' 'unsafe-inline';
+    script-src 'self' 'sha256-Uvrg8jrFq+hMyXhF8WXi/mckZqggZjsngyRsC0ACriY=' https://cdn.jsdelivr.net;
+    connect-src 'self'
+      https://accounts.google.com
+      https://oauth2.googleapis.com
+      https://www.googleapis.com
+      https://*.googleapis.com
+      https://api.anthropic.com
+      https://api.openai.com
+      https://cdn.jsdelivr.net
+      https://huggingface.co
+      https://*.huggingface.co
+      https://*.hf.co
+      http://localhost:* http://127.0.0.1:* ;
+    worker-src 'self' blob: ;
+  " />
+  <style>
+    /* ------------------------------------------------------------------ *
+     * Design tokens                                                       *
+     * ------------------------------------------------------------------ */
+    :root {
+      --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+      --bg: #fbfbfa;
+      --surface: #ffffff;
+      --surface-2: #f3f3f1;
+      --border: #e6e6e2;
+      --border-strong: #d3d3cd;
+      --text: #1d1d1b;
+      --text-dim: #6b6b66;
+      --text-faint: #9b9b95;
+      --accent: #2f6f4f;
+      --accent-soft: #e4efe8;
+      --danger: #b3392f;
+      --danger-soft: #f7e3e1;
+      --now: #d1453b;
+
+      --radius: 10px;
+      --radius-sm: 7px;
+      --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.08);
+      --hour-h: 48px;
+      --gutter-w: 56px;
+      --header-h: 52px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #16161a;
+        --surface: #1d1d22;
+        --surface-2: #26262c;
+        --border: #2f2f37;
+        --border-strong: #3c3c45;
+        --text: #ececef;
+        --text-dim: #a0a0a8;
+        --text-faint: #70707a;
+        --accent: #6fcf97;
+        --accent-soft: #1e3329;
+        --danger: #e8857d;
+        --danger-soft: #3a2421;
+        --now: #ef5350;
+        --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 32px rgba(0,0,0,.45);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.45;
+      color: var(--text);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    button { font-family: inherit; font-size: inherit; color: inherit; }
+
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+    }
+
+    .hidden { display: none !important; }
+    .visually-hidden {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
+
+    /* ------------------------------------------------------------------ *
+     * App shell                                                           *
+     * ------------------------------------------------------------------ */
+    #app { display: flex; flex-direction: column; height: 100dvh; }
+
+    .topbar {
+      display: flex; align-items: center; gap: 12px;
+      height: var(--header-h);
+      padding: 0 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex: 0 0 auto;
+    }
+    .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: -.01em; }
+    .brand svg { color: var(--accent); }
+    .brand .tide-sub { color: var(--text-faint); font-weight: 500; font-size: 12px; }
+
+    .topbar .spacer { flex: 1; }
+
+    .seg {
+      display: inline-flex; background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;
+    }
+    .seg button {
+      border: 0; background: transparent; padding: 6px 12px; cursor: pointer;
+      color: var(--text-dim); font-weight: 550;
+    }
+    .seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+    .navgroup { display: inline-flex; align-items: center; gap: 2px; }
+    .iconbtn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; border-radius: var(--radius-sm);
+      border: 1px solid transparent; background: transparent; cursor: pointer; color: var(--text-dim);
+    }
+    .iconbtn:hover { background: var(--surface-2); color: var(--text); }
+    .btn {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 7px 12px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong); background: var(--surface);
+      color: var(--text); cursor: pointer; font-weight: 550;
+    }
+    .btn:hover { background: var(--surface-2); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    @media (prefers-color-scheme: dark) { .btn.primary { color: #0b1f14; } }
+    .btn.primary:hover { filter: brightness(1.05); }
+    .btn.ghost { border-color: transparent; background: transparent; }
+    .btn.ghost:hover { background: var(--surface-2); }
+    .btn.danger { color: var(--danger); border-color: var(--border-strong); }
+    .btn.danger:hover { background: var(--danger-soft); }
+
+    .period { font-weight: 600; min-width: 168px; }
+    .period .period-sub { color: var(--text-faint); font-weight: 500; margin-left: 6px; font-size: 12px; }
+
+    .acct {
+      display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+      padding: 4px 8px; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--surface-2); color: var(--text-dim); font-size: 12.5px;
+    }
+    .acct:hover { color: var(--text); }
+    .acct .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+    /* ------------------------------------------------------------------ *
+     * Calendar grid                                                       *
+     * ------------------------------------------------------------------ */
+    .cal { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+
+    .cal-head {
+      display: grid; grid-template-columns: var(--gutter-w) repeat(var(--cols, 7), 1fr);
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .cal-head .corner { border-right: 1px solid var(--border); }
+    .daycol-head {
+      padding: 6px 8px; text-align: center; border-left: 1px solid var(--border);
+      display: flex; flex-direction: column; align-items: center; gap: 1px;
+      cursor: pointer;
+    }
+    .daycol-head:hover { background: var(--surface-2); }
+    .daycol-head .dow { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); }
+    .daycol-head .dnum {
+      font-size: 18px; font-weight: 600; width: 30px; height: 30px; line-height: 30px;
+      border-radius: 50%;
+    }
+    .daycol-head.today .dnum { background: var(--accent); color: #fff; }
+    @media (prefers-color-scheme: dark) { .daycol-head.today .dnum { color: #0b1f14; } }
+    .daycol-head.today .dow { color: var(--accent); }
+
+    .cal-allday {
+      display: grid; grid-template-columns: var(--gutter-w) repeat(var(--cols, 7), 1fr);
+      border-bottom: 1px solid var(--border); background: var(--surface);
+      max-height: 96px; overflow-y: auto;
+    }
+    .cal-allday .allday-label {
+      font-size: 10.5px; color: var(--text-faint); text-transform: uppercase;
+      letter-spacing: .04em; padding: 4px 6px; text-align: right; border-right: 1px solid var(--border);
+    }
+    .allday-cell { border-left: 1px solid var(--border); padding: 3px; min-height: 24px; display: flex; flex-direction: column; gap: 3px; }
+
+    .cal-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; position: relative; }
+    .cal-grid {
+      display: grid; grid-template-columns: var(--gutter-w) repeat(var(--cols, 7), 1fr);
+      position: relative;
+    }
+    .timegutter { position: relative; }
+    .hourlabel {
+      position: absolute; right: 6px; transform: translateY(-50%);
+      font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums;
+    }
+    .daycol {
+      position: relative; border-left: 1px solid var(--border);
+      background-image: repeating-linear-gradient(
+        to bottom,
+        var(--border) 0, var(--border) 1px,
+        transparent 1px, transparent var(--hour-h)
+      );
+    }
+    .daycol.weekend { background-color: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+
+    .event {
+      position: absolute; left: 2px; right: 2px;
+      border-radius: 6px; padding: 3px 6px; overflow: hidden;
+      font-size: 12px; line-height: 1.25; cursor: pointer;
+      border-left: 3px solid rgba(0,0,0,.25);
+      box-shadow: 0 1px 1px rgba(0,0,0,.06);
+      color: #111;
+    }
+    .event:hover { filter: brightness(1.04); z-index: 5 !important; }
+    .event .ev-time { font-size: 10.5px; opacity: .8; }
+    .event .ev-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .event.compact { padding: 1px 6px; }
+    .event.compact .ev-time { display: none; }
+
+    .allday-chip {
+      border-radius: 5px; padding: 2px 7px; font-size: 11.5px; font-weight: 600;
+      cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #111;
+    }
+
+    .nowline { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid var(--now); z-index: 6; pointer-events: none; }
+    .nowline::before {
+      content: ""; position: absolute; left: -4px; top: -4px; width: 8px; height: 8px;
+      border-radius: 50%; background: var(--now);
+    }
+
+    .ghostsel {
+      position: absolute; left: 2px; right: 2px; background: var(--accent-soft);
+      border: 1px dashed var(--accent); border-radius: 6px; pointer-events: none; z-index: 4;
+    }
+
+    /* ------------------------------------------------------------------ *
+     * Connect screen                                                      *
+     * ------------------------------------------------------------------ */
+    .connect {
+      position: fixed; inset: 0; display: grid; place-items: center; padding: 24px;
+      background: var(--bg);
+    }
+    .connect-card {
+      max-width: 460px; width: 100%; text-align: center;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow); padding: 36px 32px;
+    }
+    .connect-card .mark { color: var(--accent); margin-bottom: 14px; }
+    .connect-card h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: -.02em; }
+    .connect-card p { color: var(--text-dim); margin: 0 auto 22px; max-width: 36ch; }
+    .connect-card .fine { font-size: 12px; color: var(--text-faint); margin-top: 18px; }
+    .connect-card .warn {
+      text-align: left; background: var(--danger-soft); color: var(--text);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 12px 14px; margin-bottom: 20px; font-size: 12.5px;
+    }
+    .connect-card code { font-family: var(--mono); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
+    /* ------------------------------------------------------------------ *
+     * Modals / overlay                                                    *
+     * ------------------------------------------------------------------ */
+    .overlay {
+      position: fixed; inset: 0; background: rgba(20,20,22,.4);
+      display: flex; align-items: flex-start; justify-content: center;
+      padding: 12vh 16px 16px; z-index: 50;
+      animation: fade .12s ease;
+    }
+    @keyframes fade { from { opacity: 0; } }
+    .modal {
+      width: 100%; max-width: 540px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      box-shadow: var(--shadow); overflow: hidden;
+    }
+    .modal.wide { max-width: 600px; }
+    .modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+    .modal-head h2 { margin: 0; font-size: 15px; font-weight: 650; }
+    .modal-head .spacer { flex: 1; }
+    .modal-body { padding: 16px; max-height: 64vh; overflow-y: auto; }
+    .modal-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface-2); }
+
+    /* Command bar */
+    .cmd-input {
+      width: 100%; border: 0; background: transparent; font-size: 18px; color: var(--text);
+      padding: 18px 18px; outline: none;
+    }
+    .cmd-wrap { display: flex; align-items: center; padding-left: 16px; border-bottom: 1px solid var(--border); }
+    .cmd-wrap svg { color: var(--text-faint); flex: 0 0 auto; }
+    .cmd-preview { padding: 14px 18px; }
+    .cmd-preview .row { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; }
+    .cmd-preview .k { width: 72px; color: var(--text-faint); font-size: 12px; flex: 0 0 auto; }
+    .cmd-preview .v { font-weight: 550; }
+    .cmd-hint { padding: 12px 18px; color: var(--text-faint); font-size: 12.5px; }
+    .cmd-tier { font-size: 11px; color: var(--text-faint); }
+    .kbd {
+      font-family: var(--mono); font-size: 11px; background: var(--surface-2);
+      border: 1px solid var(--border-strong); border-bottom-width: 2px;
+      border-radius: 5px; padding: 1px 5px; color: var(--text-dim);
+    }
+
+    /* Forms */
+    label.field { display: block; margin-bottom: 14px; }
+    label.field > span { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; font-weight: 550; }
+    input[type=text], input[type=datetime-local], input[type=number], input[type=password], textarea, select {
+      width: 100%; padding: 8px 10px; border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm); background: var(--surface); color: var(--text);
+      font-family: inherit; font-size: 14px;
+    }
+    textarea { resize: vertical; min-height: 60px; }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .inline { display: flex; align-items: center; gap: 8px; }
+    .chk { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 5px 0; }
+
+    .callist { display: flex; flex-direction: column; gap: 2px; }
+    .calrow { display: flex; align-items: center; gap: 9px; padding: 5px 6px; border-radius: var(--radius-sm); cursor: pointer; }
+    .calrow:hover { background: var(--surface-2); }
+    .calswatch { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; border: 1px solid rgba(0,0,0,.15); }
+    .calname { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Toasts */
+    .toasts { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 80; align-items: center; }
+    .toast {
+      background: var(--text); color: var(--bg); padding: 10px 14px; border-radius: var(--radius-sm);
+      box-shadow: var(--shadow); display: flex; align-items: center; gap: 12px; max-width: 90vw;
+      animation: rise .16s ease;
+    }
+    @keyframes rise { from { transform: translateY(8px); opacity: 0; } }
+    .toast.err { background: var(--danger); color: #fff; }
+    .toast button { background: transparent; border: 0; color: inherit; text-decoration: underline; cursor: pointer; font-weight: 600; }
+
+    .banner {
+      background: #b8860020; color: var(--text); border-bottom: 1px solid var(--border);
+      padding: 6px 14px; font-size: 12.5px; text-align: center;
+    }
+
+    .empty { display: grid; place-items: center; height: 100%; color: var(--text-faint); }
+
+    dl.kv { margin: 0; }
+    dl.kv dt { font-size: 12px; color: var(--text-faint); margin-top: 10px; }
+    dl.kv dd { margin: 2px 0 0; }
+
+    .muted { color: var(--text-dim); }
+    .small { font-size: 12px; }
+    .help-section { margin-bottom: 18px; }
+    .help-section h3 { margin: 0 0 6px; font-size: 13px; }
+    .help-keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; }
+
+    @media (max-width: 720px) {
+      .period { min-width: auto; font-size: 13px; }
+      .brand .tide-sub { display: none; }
+      .topbar { gap: 8px; padding: 0 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="hidden">
+    <div class="topbar" role="toolbar" aria-label="Calendar controls">
+      <div class="brand">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2 12c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/>
+          <path d="M2 17c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/>
+        </svg>
+        <span>Tide</span>
+      </div>
+
+      <div class="navgroup" style="margin-left:6px">
+        <button class="btn ghost" id="todayBtn" title="Today (T)">Today</button>
+        <button class="iconbtn" id="prevBtn" title="Previous (←)" aria-label="Previous period">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+        <button class="iconbtn" id="nextBtn" title="Next (→)" aria-label="Next period">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+      </div>
+
+      <div class="period" id="periodLabel" aria-live="polite"></div>
+
+      <div class="spacer"></div>
+
+      <div class="seg" role="group" aria-label="View">
+        <button id="weekViewBtn" aria-pressed="true">Week</button>
+        <button id="dayViewBtn" aria-pressed="false">Day</button>
+      </div>
+
+      <button class="btn" id="cmdOpenBtn" title="Command bar (⌘K / Ctrl+K)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <span class="kbd">⌘K</span>
+      </button>
+
+      <button class="btn primary" id="newEventBtn" title="New event (N)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg>
+        New
+      </button>
+
+      <button class="iconbtn" id="helpBtn" title="Help (?)" aria-label="Help">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+      </button>
+
+      <button class="acct" id="acctBtn" title="Account &amp; settings">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="acctLabel">…</span>
+      </button>
+    </div>
+
+    <div id="offlineBanner" class="banner hidden">Offline — showing last-read events. Writes are paused until you reconnect.</div>
+
+    <main class="cal" id="calRoot" aria-label="Calendar">
+      <div class="cal-head" id="calHead"></div>
+      <div class="cal-allday" id="calAllday"></div>
+      <div class="cal-body" id="calBody">
+        <div class="cal-grid" id="calGrid"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Connect screen -->
+  <div class="connect" id="connectScreen">
+    <div class="connect-card">
+      <div class="mark">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2 12c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/>
+          <path d="M2 17c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/>
+          <path d="M2 7c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/>
+        </svg>
+      </div>
+      <h1>Tide</h1>
+      <p>Your Google Calendar, rendered fast and keyboard-first. Nothing in between — your token stays in this browser and never touches a server.</p>
+      <div id="configWarn" class="warn hidden"></div>
+      <button class="btn primary" id="connectBtn" style="font-size:15px;padding:10px 18px">Connect Google Calendar</button>
+      <p class="fine">PKCE OAuth straight to Google. No account, no telemetry, no install. Tokens live only in this browser's IndexedDB.</p>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+  <div id="modalRoot"></div>
+
+  <script type="module">
+  "use strict";
+
+  /* ====================================================================== *
+   *  CONFIG                                                                 *
+   *  ---------------------------------------------------------------------  *
+   *  GOOGLE_CLIENT_ID is the ONLY thing you must set to run Tide.           *
+   *  It is a *public* PKCE client id (no secret) and is meant to live in    *
+   *  source. Create one at https://console.cloud.google.com (OAuth 2.0      *
+   *  Client ID, type "Web application"), then register this page's exact    *
+   *  origin + path as an Authorized JavaScript origin and redirect URI.     *
+   *  You can also override at runtime with ?client_id=... for quick tests.  *
+   * ====================================================================== */
+  const GOOGLE_CLIENT_ID =
+    new URLSearchParams(location.search).get("client_id") ||
+    localStorage.getItem("tide.clientId") ||
+    "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
+
+  const OAUTH = {
+    authEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenEndpoint: "https://oauth2.googleapis.com/token",
+    scopes: [
+      "openid",
+      "email",
+      "https://www.googleapis.com/auth/calendar.events",
+      "https://www.googleapis.com/auth/calendar.readonly",
+    ].join(" "),
+  };
+
+  const GCAL = "https://www.googleapis.com/calendar/v3";
+
+  // Pinned Transformers.js CDN (L2 of the LLM ladder). Lazy-loaded only when used.
+  const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3";
+  const L2_MODEL = "onnx-community/Qwen2.5-0.5B-Instruct";
+  // nakli-local-bridge / Ollama (L1). Tried, never required.
+  const BRIDGE_URL = localStorage.getItem("tide.bridge") || "http://localhost:11434";
+
+  const CONNECTION_ID = "primary"; // v1 holds one connection; records are keyed so v1.x can add more.
+
+  /* ====================================================================== *
+   *  Tiny DOM helpers (no innerHTML for untrusted data — textContent only)  *
+   * ====================================================================== */
+  const $ = (sel, root = document) => root.querySelector(sel);
+  function h(tag, props = {}, ...kids) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) {
+      if (v == null) continue;
+      if (k === "class") e.className = v;
+      else if (k === "text") e.textContent = v;
+      else if (k === "html") e.innerHTML = v; // only used with our own static markup
+      else if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+      else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v);
+      else if (k === "dataset") Object.assign(e.dataset, v);
+      else if (v === true) e.setAttribute(k, "");
+      else if (v === false) {/* skip */}
+      else e.setAttribute(k, v);
+    }
+    for (const kid of kids.flat()) {
+      if (kid == null || kid === false) continue;
+      e.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+    }
+    return e;
+  }
+  const ICON = {
+    close: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+    search: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>',
+    trash: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  };
+
+  /* ====================================================================== *
+   *  Vault — IndexedDB. Tokens, BYOK key and prefs. Per-origin, per-conn.   *
+   *  Records are keyed by connection id so v1.x can hold a second account.  *
+   * ====================================================================== */
+  const Vault = (() => {
+    const DB = "tide", STORE = "kv", VERSION = 1;
+    let dbp = null;
+    function open() {
+      if (dbp) return dbp;
+      dbp = new Promise((res, rej) => {
+        const r = indexedDB.open(DB, VERSION);
+        r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE); };
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      });
+      return dbp;
+    }
+    async function tx(mode, fn) {
+      const db = await open();
+      return new Promise((res, rej) => {
+        const t = db.transaction(STORE, mode);
+        const s = t.objectStore(STORE);
+        const out = fn(s);
+        t.oncomplete = () => res(out && out.result !== undefined ? out.result : out);
+        t.onerror = () => rej(t.error);
+        t.onabort = () => rej(t.error);
+      });
+    }
+    const key = (k) => `${CONNECTION_ID}:${k}`;
+    return {
+      get: (k) => tx("readonly", (s) => s.get(key(k))).then((r) => (r === undefined ? null : r)),
+      set: (k, v) => tx("readwrite", (s) => s.put(v, key(k))),
+      del: (k) => tx("readwrite", (s) => s.delete(key(k))),
+      async clearAll() {
+        const db = await open();
+        return new Promise((res, rej) => {
+          const t = db.transaction(STORE, "readwrite");
+          const req = t.objectStore(STORE).clear();
+          req.onsuccess = () => res();
+          req.onerror = () => rej(req.error);
+        });
+      },
+    };
+  })();
+
+  /* ====================================================================== *
+   *  PKCE helpers                                                           *
+   * ====================================================================== */
+  function b64url(buf) {
+    return btoa(String.fromCharCode(...new Uint8Array(buf)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function randString(len = 64) {
+    const a = new Uint8Array(len);
+    crypto.getRandomValues(a);
+    return b64url(a).slice(0, len);
+  }
+  async function sha256(str) {
+    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  }
+
+  /* ====================================================================== *
+   *  Auth — Authorization Code + PKCE, fully client-side.                   *
+   * ====================================================================== */
+  const Auth = (() => {
+    let access = null;      // { token, expiresAt } in memory primarily
+    let conn = null;        // { email, sub, refreshToken, scope }
+
+    function redirectUri() { return location.origin + location.pathname; }
+    function clientConfigured() { return GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith("YOUR_"); }
+
+    async function begin() {
+      if (!clientConfigured()) { showConfigWarning(); return; }
+      const verifier = randString(64);
+      const state = randString(24);
+      const challenge = b64url(await sha256(verifier));
+      sessionStorage.setItem("tide.pkce.verifier", verifier);
+      sessionStorage.setItem("tide.pkce.state", state);
+      const p = new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: redirectUri(),
+        response_type: "code",
+        scope: OAUTH.scopes,
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        state,
+        access_type: "offline",
+        prompt: "consent",
+        include_granted_scopes: "true",
+      });
+      location.assign(`${OAUTH.authEndpoint}?${p.toString()}`);
+    }
+
+    // Handle the redirect back from Google. Returns true if a code was processed.
+    async function handleRedirect() {
+      const params = new URLSearchParams(location.search);
+      const code = params.get("code");
+      const state = params.get("state");
+      const error = params.get("error");
+      if (error) {
+        cleanUrl();
+        toast(`Google returned: ${error}`, "err");
+        return false;
+      }
+      if (!code) return false;
+
+      const expectState = sessionStorage.getItem("tide.pkce.state");
+      const verifier = sessionStorage.getItem("tide.pkce.verifier");
+      sessionStorage.removeItem("tide.pkce.state");
+      sessionStorage.removeItem("tide.pkce.verifier");
+      cleanUrl();
+      if (!expectState || state !== expectState || !verifier) {
+        toast("OAuth state mismatch — please try connecting again.", "err");
+        return false;
+      }
+      try {
+        await exchangeCode(code, verifier);
+        return true;
+      } catch (e) {
+        console.error(e);
+        toast("Token exchange failed. See console; if this is a CORS error the token endpoint may need the bridge.", "err");
+        return false;
+      }
+    }
+
+    function cleanUrl() {
+      const u = new URL(location.href);
+      u.search = "";
+      history.replaceState({}, document.title, u.toString());
+    }
+
+    async function exchangeCode(code, verifier) {
+      const body = new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        code,
+        code_verifier: verifier,
+        grant_type: "authorization_code",
+        redirect_uri: redirectUri(),
+      });
+      const r = await fetch(OAUTH.tokenEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
+      if (!r.ok) throw new Error("token exchange " + r.status + " " + (await r.text()));
+      const data = await r.json();
+      const claims = data.id_token ? decodeJwt(data.id_token) : {};
+      conn = {
+        email: claims.email || "(unknown account)",
+        sub: claims.sub || null,
+        refreshToken: data.refresh_token || (conn && conn.refreshToken) || null,
+        scope: data.scope || OAUTH.scopes,
+      };
+      access = { token: data.access_token, expiresAt: Date.now() + (data.expires_in - 60) * 1000 };
+      await Vault.set("connection", conn); // refresh token persisted; access token stays in memory
+    }
+
+    function decodeJwt(jwt) {
+      try {
+        const p = jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+        return JSON.parse(decodeURIComponent(escape(atob(p))));
+      } catch { return {}; }
+    }
+
+    async function loadStored() {
+      conn = await Vault.get("connection");
+      return !!(conn && conn.refreshToken);
+    }
+
+    async function refresh() {
+      if (!conn || !conn.refreshToken) throw new Error("no refresh token");
+      const body = new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        refresh_token: conn.refreshToken,
+        grant_type: "refresh_token",
+      });
+      const r = await fetch(OAUTH.tokenEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
+      if (r.status === 400 || r.status === 401) {
+        // refresh token revoked/expired
+        access = null;
+        throw Object.assign(new Error("refresh rejected"), { reauth: true });
+      }
+      if (!r.ok) throw new Error("refresh " + r.status);
+      const data = await r.json();
+      access = { token: data.access_token, expiresAt: Date.now() + (data.expires_in - 60) * 1000 };
+      return access.token;
+    }
+
+    async function token() {
+      if (access && access.token && Date.now() < access.expiresAt) return access.token;
+      return refresh();
+    }
+
+    async function disconnect() {
+      access = null; conn = null;
+      await Vault.clearAll();
+    }
+
+    return {
+      begin, handleRedirect, loadStored, token, disconnect, refresh,
+      isConnected: () => !!(conn && conn.refreshToken),
+      account: () => conn,
+      fingerprint: () => (access && access.token ? access.token.slice(-4) : "----"),
+      clientConfigured,
+    };
+  })();
+
+  function showConfigWarning() {
+    const warn = $("#configWarn");
+    warn.classList.remove("hidden");
+    warn.replaceChildren(
+      h("strong", { text: "Google Client ID not set. " }),
+      h("span", { text: "Open index.html and set " }),
+      h("code", { text: "GOOGLE_CLIENT_ID" }),
+      h("span", { text: ", or append " }),
+      h("code", { text: "?client_id=…" }),
+      h("span", { text: " to the URL. See the README for the 4 setup steps." }),
+    );
+  }
+
+  /* ====================================================================== *
+   *  Google Calendar API client (shared by UI and agent face)              *
+   * ====================================================================== */
+  async function gfetch(path, opts = {}, retry = true) {
+    const tok = await Auth.token();
+    const r = await fetch(path.startsWith("http") ? path : GCAL + path, {
+      ...opts,
+      headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json", ...(opts.headers || {}) },
+    });
+    if (r.status === 401 && retry) {
+      await Auth.refresh();
+      return gfetch(path, opts, false);
+    }
+    if (!r.ok) {
+      const body = await r.text().catch(() => "");
+      throw Object.assign(new Error(`GCal ${r.status}`), { status: r.status, body });
+    }
+    if (r.status === 204) return null;
+    return r.json();
+  }
+
+  const Api = {
+    async listCalendars() {
+      const data = await gfetch("/users/me/calendarList?minAccessRole=reader&maxResults=250");
+      return (data.items || []).map((c) => ({
+        id: c.id,
+        summary: c.summaryOverride || c.summary,
+        primary: !!c.primary,
+        color: c.backgroundColor || "#7986cb",
+        fg: c.foregroundColor || "#1d1d1b",
+        selected: c.selected !== false,
+        accessRole: c.accessRole,
+      }));
+    },
+    async listEvents(calendarId, timeMin, timeMax) {
+      const out = [];
+      let pageToken = null;
+      do {
+        const p = new URLSearchParams({
+          singleEvents: "true",
+          orderBy: "startTime",
+          timeMin: timeMin.toISOString(),
+          timeMax: timeMax.toISOString(),
+          maxResults: "2500",
+          showDeleted: "false",
+        });
+        if (pageToken) p.set("pageToken", pageToken);
+        const data = await gfetch(`/calendars/${encodeURIComponent(calendarId)}/events?${p}`);
+        for (const e of data.items || []) out.push(e);
+        pageToken = data.nextPageToken || null;
+      } while (pageToken);
+      return out;
+    },
+    createEvent(calendarId, resource) {
+      return gfetch(`/calendars/${encodeURIComponent(calendarId)}/events`, {
+        method: "POST", body: JSON.stringify(resource),
+      });
+    },
+    updateEvent(calendarId, eventId, resource) {
+      return gfetch(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
+        method: "PATCH", body: JSON.stringify(resource),
+      });
+    },
+    deleteEvent(calendarId, eventId) {
+      return gfetch(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
+        method: "DELETE",
+      });
+    },
+  };
+
+  /* ====================================================================== *
+   *  Prefs                                                                  *
+   * ====================================================================== */
+  const DEFAULT_PREFS = {
+    defaultView: "week",
+    weekStart: 1,           // 0 Sun, 1 Mon
+    workingHours: { start: 9, end: 18 },
+    reminderMinutes: 10,
+    selectedCalendars: null, // null = use each calendar's own "selected"
+    inTabNudges: true,
+  };
+  let prefs = { ...DEFAULT_PREFS };
+  async function loadPrefs() {
+    const stored = await Vault.get("prefs");
+    prefs = { ...DEFAULT_PREFS, ...(stored || {}) };
+    prefs.workingHours = { ...DEFAULT_PREFS.workingHours, ...(prefs.workingHours || {}) };
+  }
+  async function savePrefs() { await Vault.set("prefs", prefs); }
+
+  /* ====================================================================== *
+   *  Date utilities (browser-local TZ for layout; ISO honours event TZ)    *
+   * ====================================================================== */
+  const DAY = 86400000;
+  const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+  const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  function startOfWeek(d, weekStart) {
+    const x = startOfDay(d);
+    const diff = (x.getDay() - weekStart + 7) % 7;
+    return addDays(x, -diff);
+  }
+  const fmtTime = (d) => d.toLocaleTimeString([], { hour: "numeric", minute: d.getMinutes() ? "2-digit" : undefined });
+  const fmtHour = (hr) => new Date(2000, 0, 1, hr).toLocaleTimeString([], { hour: "numeric" });
+  const WDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  // datetime-local <-> Date
+  function toLocalInput(d) {
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  const fromLocalInput = (s) => new Date(s);
+
+  function eventStart(e) {
+    if (e.start?.dateTime) return new Date(e.start.dateTime);
+    if (e.start?.date) return new Date(e.start.date + "T00:00:00");
+    return new Date();
+  }
+  function eventEnd(e) {
+    if (e.end?.dateTime) return new Date(e.end.dateTime);
+    if (e.end?.date) return new Date(e.end.date + "T00:00:00");
+    return new Date();
+  }
+  const isAllDay = (e) => !!(e.start && e.start.date);
+
+  /* ====================================================================== *
+   *  App state                                                             *
+   * ====================================================================== */
+  const state = {
+    view: "week",
+    anchor: startOfDay(new Date()),
+    calendars: [],          // from API
+    selected: new Set(),    // calendar ids to render
+    events: [],             // raw Google events with _calId/_color attached
+    rangeFrom: null,
+    rangeTo: null,
+    loading: false,
+    offline: !navigator.onLine,
+  };
+
+  function visibleDays() {
+    if (state.view === "day") return [new Date(state.anchor)];
+    const s = startOfWeek(state.anchor, prefs.weekStart);
+    return Array.from({ length: 7 }, (_, i) => addDays(s, i));
+  }
+
+  /* ====================================================================== *
+   *  Data loading                                                          *
+   * ====================================================================== */
+  async function ensureCalendars() {
+    if (state.calendars.length) return;
+    state.calendars = await Api.listCalendars();
+    const sel = prefs.selectedCalendars;
+    state.selected = new Set(
+      sel ? sel : state.calendars.filter((c) => c.selected).map((c) => c.id)
+    );
+    if (state.selected.size === 0 && state.calendars.length) {
+      const prim = state.calendars.find((c) => c.primary) || state.calendars[0];
+      state.selected.add(prim.id);
+    }
+  }
+
+  async function loadEvents() {
+    const days = visibleDays();
+    const from = startOfDay(days[0]);
+    const to = addDays(startOfDay(days[days.length - 1]), 1);
+    state.rangeFrom = from; state.rangeTo = to;
+    state.loading = true; renderHeader();
+    try {
+      const cals = state.calendars.filter((c) => state.selected.has(c.id));
+      const lists = await Promise.all(
+        cals.map((c) =>
+          Api.listEvents(c.id, from, to)
+            .then((items) => items.map((e) => ({ ...e, _calId: c.id, _color: c.color })))
+            .catch((err) => { console.warn("calendar load failed", c.id, err); return []; })
+        )
+      );
+      state.events = lists.flat();
+      await Vault.set("eventCache", { from: from.toISOString(), to: to.toISOString(), events: state.events });
+      state.offline = false;
+      $("#offlineBanner").classList.add("hidden");
+    } catch (err) {
+      if (err.reauth) { renderConnect(true); return; }
+      console.error(err);
+      // fall back to cache
+      const cache = await Vault.get("eventCache");
+      if (cache) { state.events = cache.events; state.offline = true; $("#offlineBanner").classList.remove("hidden"); }
+      toast("Couldn't refresh events — showing what we have.", "err");
+    } finally {
+      state.loading = false;
+      render();
+      scheduleNudges();
+    }
+  }
+
+  /* ====================================================================== *
+   *  Rendering — header                                                    *
+   * ====================================================================== */
+  function renderHeader() {
+    const days = visibleDays();
+    const first = days[0], last = days[days.length - 1];
+    let label;
+    if (state.view === "day") {
+      label = first.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+    } else if (first.getMonth() === last.getMonth()) {
+      label = `${MON[first.getMonth()]} ${first.getDate()}–${last.getDate()}`;
+    } else {
+      label = `${MON[first.getMonth()]} ${first.getDate()} – ${MON[last.getMonth()]} ${last.getDate()}`;
+    }
+    const lab = $("#periodLabel");
+    lab.replaceChildren(
+      h("span", { text: label }),
+      h("span", { class: "period-sub", text: String(first.getFullYear()) }),
+      state.loading ? h("span", { class: "period-sub", text: "· loading…" }) : null,
+    );
+    $("#weekViewBtn").setAttribute("aria-pressed", state.view === "week");
+    $("#dayViewBtn").setAttribute("aria-pressed", state.view === "day");
+    document.documentElement.style.setProperty("--cols", String(days.length));
+  }
+
+  /* ====================================================================== *
+   *  Rendering — grid                                                      *
+   * ====================================================================== */
+  const HOUR_H = 48;
+  function render() {
+    renderHeader();
+    const days = visibleDays();
+    const today = new Date();
+
+    // Head
+    const head = $("#calHead");
+    head.replaceChildren(h("div", { class: "corner" }));
+    days.forEach((d, i) => {
+      const isToday = sameDay(d, today);
+      head.append(h("div", {
+        class: "daycol-head" + (isToday ? " today" : ""),
+        role: "button", tabindex: "0",
+        "aria-label": d.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }),
+        onclick: () => { state.anchor = startOfDay(d); state.view = "day"; loadEvents(); },
+        onkeydown: (ev) => { if (ev.key === "Enter") { state.anchor = startOfDay(d); state.view = "day"; loadEvents(); } },
+      },
+        h("span", { class: "dow", text: WDAY[d.getDay()] }),
+        h("span", { class: "dnum", text: String(d.getDate()) }),
+      ));
+    });
+
+    // All-day row
+    const ad = $("#calAllday");
+    ad.replaceChildren(h("div", { class: "allday-label", text: "all-day" }));
+    const byDayAllDay = days.map(() => []);
+    for (const e of state.events) {
+      if (!isAllDay(e)) continue;
+      const s = eventStart(e), en = eventEnd(e);
+      days.forEach((d, i) => {
+        const dayStart = startOfDay(d), dayEnd = addDays(dayStart, 1);
+        if (s < dayEnd && en > dayStart) byDayAllDay[i].push(e);
+      });
+    }
+    days.forEach((d, i) => {
+      const cell = h("div", { class: "allday-cell" });
+      for (const e of byDayAllDay[i]) {
+        const { bg, fg } = eventColors(e);
+        cell.append(h("div", {
+          class: "allday-chip", title: e.summary || "(busy)",
+          style: { background: bg, color: fg },
+          role: "button", tabindex: "0",
+          text: e.summary || "(busy)",
+          onclick: () => openEventDetail(e),
+          onkeydown: (ev) => { if (ev.key === "Enter") openEventDetail(e); },
+        }));
+      }
+      ad.append(cell);
+    });
+
+    // Time grid
+    const grid = $("#calGrid");
+    grid.replaceChildren();
+    // gutter with hour labels
+    const gutter = h("div", { class: "timegutter", style: { height: HOUR_H * 24 + "px" } });
+    for (let hr = 1; hr < 24; hr++) {
+      gutter.append(h("span", { class: "hourlabel", style: { top: hr * HOUR_H + "px" }, text: fmtHour(hr) }));
+    }
+    grid.append(gutter);
+
+    days.forEach((d, i) => {
+      const col = h("div", {
+        class: "daycol" + ([0, 6].includes(d.getDay()) ? " weekend" : ""),
+        style: { height: HOUR_H * 24 + "px" },
+        dataset: { dayIndex: String(i) },
+      });
+      col.addEventListener("click", (ev) => onColumnClick(ev, d));
+      // events
+      const timed = state.events.filter((e) => !isAllDay(e) && overlapsDay(e, d));
+      layoutDay(timed, d).forEach((p) => col.append(renderEvent(p)));
+      // now line
+      if (sameDay(d, today)) {
+        const mins = today.getHours() * 60 + today.getMinutes();
+        col.append(h("div", { class: "nowline", style: { top: (mins / 60) * HOUR_H + "px" } }));
+      }
+      grid.append(col);
+    });
+
+    // scroll to working hours start on first paint of a view
+    const body = $("#calBody");
+    if (!body.dataset.scrolled) {
+      body.scrollTop = Math.max(0, (prefs.workingHours.start - 0.5) * HOUR_H);
+      body.dataset.scrolled = "1";
+    }
+  }
+
+  function overlapsDay(e, d) {
+    const s = eventStart(e), en = eventEnd(e);
+    const ds = startOfDay(d), de = addDays(ds, 1);
+    return s < de && en > ds;
+  }
+
+  function eventColors(e) {
+    const bg = e._color || "#7986cb";
+    return { bg, fg: contrastText(bg) };
+  }
+  function contrastText(hex) {
+    const c = hex.replace("#", "");
+    if (c.length < 6) return "#111";
+    const r = parseInt(c.slice(0, 2), 16), g = parseInt(c.slice(2, 4), 16), b = parseInt(c.slice(4, 6), 16);
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return lum > 0.6 ? "#16160f" : "#ffffff";
+  }
+
+  // Overlap layout: pack overlapping events into columns.
+  function layoutDay(events, day) {
+    const ds = startOfDay(day), de = addDays(ds, 1);
+    const items = events.map((e) => {
+      const s = new Date(Math.max(eventStart(e), ds));
+      const en = new Date(Math.min(eventEnd(e), de));
+      return { e, startMin: (s - ds) / 60000, endMin: Math.max((en - ds) / 60000, (s - ds) / 60000 + 20) };
+    }).sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin);
+
+    const out = [];
+    let cluster = [], clusterEnd = -1;
+    const flush = () => {
+      // assign columns within the cluster
+      const cols = [];
+      for (const it of cluster) {
+        let placed = false;
+        for (let ci = 0; ci < cols.length; ci++) {
+          if (cols[ci] <= it.startMin) { cols[ci] = it.endMin; it.col = ci; placed = true; break; }
+        }
+        if (!placed) { it.col = cols.length; cols.push(it.endMin); }
+      }
+      const n = cols.length;
+      for (const it of cluster) out.push({ ...it, ncols: n });
+      cluster = []; clusterEnd = -1;
+    };
+    for (const it of items) {
+      if (cluster.length && it.startMin >= clusterEnd) flush();
+      cluster.push(it); clusterEnd = Math.max(clusterEnd, it.endMin);
+    }
+    if (cluster.length) flush();
+    return out;
+  }
+
+  function renderEvent(p) {
+    const { e } = p;
+    const { bg, fg } = eventColors(e);
+    const top = (p.startMin / 60) * HOUR_H;
+    const height = Math.max(((p.endMin - p.startMin) / 60) * HOUR_H - 2, 16);
+    const widthPct = 100 / p.ncols;
+    const compact = height < 34;
+    const node = h("div", {
+      class: "event" + (compact ? " compact" : ""),
+      role: "button", tabindex: "0",
+      "aria-label": `${e.summary || "(busy)"}, ${fmtTime(eventStart(e))} to ${fmtTime(eventEnd(e))}`,
+      title: `${e.summary || "(busy)"} · ${fmtTime(eventStart(e))}–${fmtTime(eventEnd(e))}`,
+      style: {
+        top: top + "px", height: height + "px",
+        left: `calc(${p.col * widthPct}% + 2px)`,
+        width: `calc(${widthPct}% - 4px)`,
+        right: "auto",
+        background: bg, color: fg, borderLeftColor: "rgba(0,0,0,.28)",
+        zIndex: String(2 + p.col),
+      },
+    },
+      h("div", { class: "ev-time", text: `${fmtTime(eventStart(e))}` }),
+      h("div", { class: "ev-title", text: e.summary || "(busy)" }),
+    );
+    node.addEventListener("click", (ev) => { ev.stopPropagation(); openEventDetail(e); });
+    node.addEventListener("keydown", (ev) => { if (ev.key === "Enter") openEventDetail(e); });
+    return node;
+  }
+
+  function onColumnClick(ev, day) {
+    const rect = ev.currentTarget.getBoundingClientRect();
+    const y = ev.clientY - rect.top;
+    let mins = Math.round((y / HOUR_H) * 60 / 30) * 30; // snap 30m
+    mins = Math.max(0, Math.min(mins, 23 * 60));
+    const start = new Date(startOfDay(day)); start.setMinutes(mins);
+    const end = new Date(start.getTime() + 60 * 60000);
+    openEventEditor({ start, end });
+  }
+
+  /* ====================================================================== *
+   *  Modals infrastructure                                                 *
+   * ====================================================================== */
+  let activeModal = null;
+  function openModal(node, { onClose } = {}) {
+    closeModal();
+    const overlay = h("div", { class: "overlay" });
+    overlay.append(node);
+    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeModal(); });
+    $("#modalRoot").append(overlay);
+    activeModal = { overlay, onClose, lastFocus: document.activeElement };
+    trapFocus(node);
+    return overlay;
+  }
+  function closeModal() {
+    if (!activeModal) return;
+    const { overlay, onClose, lastFocus } = activeModal;
+    activeModal = null;
+    overlay.remove();
+    if (onClose) onClose();
+    if (lastFocus && lastFocus.focus) try { lastFocus.focus(); } catch {}
+  }
+  function trapFocus(root) {
+    const focusables = () => [...root.querySelectorAll('a[href],button:not([disabled]),input,textarea,select,[tabindex]:not([tabindex="-1"])')].filter((e) => e.offsetParent !== null);
+    setTimeout(() => { const f = focusables(); (f[0] || root).focus(); }, 0);
+    root.addEventListener("keydown", (e) => {
+      if (e.key !== "Tab") return;
+      const f = focusables(); if (!f.length) return;
+      const first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+  }
+  function modalShell({ title, body, foot, wide }) {
+    const closeBtn = h("button", { class: "iconbtn", "aria-label": "Close", html: ICON.close });
+    closeBtn.addEventListener("click", closeModal);
+    return h("div", { class: "modal" + (wide ? " wide" : ""), role: "dialog", "aria-modal": "true", "aria-label": title, tabindex: "-1" },
+      h("div", { class: "modal-head" }, h("h2", { text: title }), h("div", { class: "spacer" }), closeBtn),
+      h("div", { class: "modal-body" }, body),
+      foot ? h("div", { class: "modal-foot" }, foot) : null,
+    );
+  }
+
+  /* ====================================================================== *
+   *  Event editor (create / edit)                                          *
+   * ====================================================================== */
+  function openEventEditor(seed = {}, existing = null) {
+    const start = seed.start || new Date();
+    const end = seed.end || new Date(start.getTime() + 3600000);
+    const writableCals = state.calendars.filter((c) => c.accessRole === "owner" || c.accessRole === "writer");
+    const defaultCal = existing ? existing._calId
+      : (state.calendars.find((c) => c.primary)?.id || writableCals[0]?.id || "primary");
+
+    const titleIn = h("input", { type: "text", value: seed.title || (existing && existing.summary) || "", placeholder: "Add title", "aria-label": "Event title" });
+    const startIn = h("input", { type: "datetime-local", value: toLocalInput(start), "aria-label": "Start" });
+    const endIn = h("input", { type: "datetime-local", value: toLocalInput(end), "aria-label": "End" });
+    const allDayChk = h("input", { type: "checkbox" });
+    if (existing && isAllDay(existing)) allDayChk.checked = true;
+    const calSel = h("select", { "aria-label": "Calendar" },
+      ...(writableCals.length ? writableCals : state.calendars).map((c) =>
+        h("option", { value: c.id, selected: c.id === defaultCal }, c.summary + (c.accessRole && c.accessRole !== "owner" && c.accessRole !== "writer" ? " (read-only)" : "")))
+    );
+    const descIn = h("textarea", { placeholder: "Description (optional)", "aria-label": "Description" }, existing?.description || "");
+    const remIn = h("input", { type: "number", min: "0", max: "40320", value: String(prefs.reminderMinutes), "aria-label": "Reminder minutes" });
+
+    // keep end after start
+    startIn.addEventListener("change", () => {
+      const s = fromLocalInput(startIn.value), e = fromLocalInput(endIn.value);
+      if (e <= s) endIn.value = toLocalInput(new Date(s.getTime() + 3600000));
+    });
+
+    const body = h("div", {},
+      h("label", { class: "field" }, h("span", { text: "Title" }), titleIn),
+      h("label", { class: "chk" }, allDayChk, h("span", { text: "All day" })),
+      h("div", { class: "row2" },
+        h("label", { class: "field" }, h("span", { text: "Start" }), startIn),
+        h("label", { class: "field" }, h("span", { text: "End" }), endIn),
+      ),
+      h("label", { class: "field" }, h("span", { text: "Calendar" }), calSel),
+      h("label", { class: "field" }, h("span", { text: "Description" }), descIn),
+      h("label", { class: "field" }, h("span", { text: "Reminder (minutes before, blank for none)" }), remIn),
+    );
+
+    const saveBtn = h("button", { class: "btn primary", text: existing ? "Save" : "Create" });
+    const foot = [];
+    if (existing && (existing._calId)) {
+      const delBtn = h("button", { class: "btn danger", html: ICON.trash + " Delete" });
+      delBtn.addEventListener("click", async () => {
+        if (!confirmWrite()) return;
+        try { await Api.deleteEvent(existing._calId, existing.id); toast("Event deleted"); closeModal(); await loadEvents(); }
+        catch (e) { toast("Delete failed: " + (e.status || e.message), "err"); }
+      });
+      foot.push(delBtn, h("div", { style: { flex: "1" } }));
+    }
+    const cancel = h("button", { class: "btn ghost", text: "Cancel" });
+    cancel.addEventListener("click", closeModal);
+    foot.push(cancel, saveBtn);
+
+    saveBtn.addEventListener("click", async () => {
+      if (!confirmWrite()) return;
+      const title = titleIn.value.trim();
+      if (!title) { titleIn.focus(); toast("Add a title", "err"); return; }
+      const allDay = allDayChk.checked;
+      const s = fromLocalInput(startIn.value), e = fromLocalInput(endIn.value);
+      const resource = buildEventResource({ title, start: s, end: e, allDay, description: descIn.value.trim(), reminderMin: remIn.value });
+      const calId = calSel.value;
+      saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+      try {
+        if (existing && existing.id) await Api.updateEvent(existing._calId, existing.id, resource);
+        else await Api.createEvent(calId, resource);
+        toast(existing ? "Event updated" : "Event created");
+        closeModal();
+        await loadEvents();
+      } catch (err) {
+        saveBtn.disabled = false; saveBtn.textContent = existing ? "Save" : "Create";
+        toast("Save failed: " + (err.status || err.message), "err");
+      }
+    });
+
+    openModal(modalShell({ title: existing ? "Edit event" : "New event", body, foot }));
+  }
+
+  function buildEventResource({ title, start, end, allDay, description, reminderMin }) {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const res = { summary: title };
+    if (description) res.description = description;
+    if (allDay) {
+      const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const endDay = new Date(start); endDay.setDate(endDay.getDate() + 1);
+      res.start = { date: ymd(start) };
+      res.end = { date: ymd(end > start ? new Date(end.getTime()) : endDay) };
+    } else {
+      res.start = { dateTime: start.toISOString(), timeZone: tz };
+      res.end = { dateTime: end.toISOString(), timeZone: tz };
+    }
+    const rm = parseInt(reminderMin, 10);
+    if (!isNaN(rm) && rm >= 0) res.reminders = { useDefault: false, overrides: [{ method: "popup", minutes: rm }] };
+    else res.reminders = { useDefault: true };
+    return res;
+  }
+
+  function confirmWrite() {
+    if (state.offline || !navigator.onLine) { toast("Offline — writes are paused (queue lands in v1.1).", "err"); return false; }
+    return true;
+  }
+
+  /* ====================================================================== *
+   *  Event detail                                                          *
+   * ====================================================================== */
+  function openEventDetail(e) {
+    const cal = state.calendars.find((c) => c.id === e._calId);
+    const when = isAllDay(e)
+      ? eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }) + " · all day"
+      : `${eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${fmtTime(eventStart(e))} – ${fmtTime(eventEnd(e))}`;
+    const body = h("div", {},
+      h("dl", { class: "kv" },
+        h("dt", { text: "When" }), h("dd", { text: when }),
+        cal ? h("dt", { text: "Calendar" }) : null, cal ? h("dd", { text: cal.summary }) : null,
+        e.location ? h("dt", { text: "Where" }) : null, e.location ? h("dd", { text: e.location }) : null,
+        e.description ? h("dt", { text: "Notes" }) : null, e.description ? h("dd", { text: e.description }) : null,
+        e.hangoutLink ? h("dt", { text: "Meet" }) : null,
+        e.hangoutLink ? h("dd", {}, h("a", { href: e.hangoutLink, target: "_blank", rel: "noopener", text: e.hangoutLink })) : null,
+      ),
+    );
+    const writable = cal && (cal.accessRole === "owner" || cal.accessRole === "writer");
+    const editBtn = h("button", { class: "btn", text: "Edit", disabled: !writable });
+    editBtn.addEventListener("click", () => openEventEditor({ start: eventStart(e), end: eventEnd(e), title: e.summary }, e));
+    const gcalBtn = e.htmlLink ? h("a", { class: "btn ghost", href: e.htmlLink, target: "_blank", rel: "noopener", text: "Open in Google" }) : null;
+    const close = h("button", { class: "btn ghost", text: "Close" });
+    close.addEventListener("click", closeModal);
+    openModal(modalShell({ title: e.summary || "(busy)", body, foot: [gcalBtn, h("div", { style: { flex: 1 } }), close, editBtn].filter(Boolean) }));
+  }
+
+  /* ====================================================================== *
+   *  Command bar — parse ladder + deterministic floor + confirm + write    *
+   * ====================================================================== */
+  function openCommandBar() {
+    const input = h("input", { class: "cmd-input", type: "text", placeholder: "e.g. lunch with Sam tomorrow 1pm", "aria-label": "Describe an event", autocomplete: "off", spellcheck: "false" });
+    const tierEl = h("div", { class: "cmd-tier" });
+    const preview = h("div", { class: "cmd-preview" });
+    const hint = h("div", { class: "cmd-hint" },
+      h("span", {}, "Press ", h("span", { class: "kbd", text: "Enter" }), " to confirm · ", h("span", { class: "kbd", text: "Esc" }), " to close"));
+    const confirmBtn = h("button", { class: "btn primary", text: "Confirm", disabled: true });
+
+    const modal = h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": "Command bar", tabindex: "-1" },
+      h("div", { class: "cmd-wrap" }, h("span", { html: ICON.search }), input),
+      preview, hint,
+      h("div", { class: "modal-foot" }, tierEl, h("div", { style: { flex: 1 } }),
+        (() => { const c = h("button", { class: "btn ghost", text: "Cancel" }); c.addEventListener("click", closeModal); return c; })(),
+        confirmBtn),
+    );
+
+    let parsed = null;
+    let parseSeq = 0;
+    const liveRegion = h("div", { class: "visually-hidden", "aria-live": "polite" });
+    modal.append(liveRegion);
+
+    const doParse = debounce(async (text) => {
+      const seq = ++parseSeq;
+      if (!text.trim()) { parsed = null; renderPreview(); return; }
+      tierEl.textContent = "parsing…";
+      try {
+        const r = await parseEvent(text);
+        if (seq !== parseSeq) return;
+        parsed = r.result; tierEl.textContent = r.tier;
+      } catch (e) {
+        if (seq !== parseSeq) return;
+        parsed = parseDeterministic(text); tierEl.textContent = "deterministic";
+      }
+      renderPreview();
+    }, 180);
+
+    function renderPreview() {
+      preview.replaceChildren();
+      if (!parsed) {
+        confirmBtn.disabled = true;
+        preview.append(h("div", { class: "muted small", text: "Type a meeting in plain words. A confirm step always precedes any write." }));
+        return;
+      }
+      confirmBtn.disabled = false;
+      const cal = state.calendars.find((c) => c.id === parsed.calendarId) || state.calendars.find((c) => c.primary) || state.calendars[0];
+      const whenStr = parsed.allDay
+        ? parsed.start.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) + " · all day"
+        : `${parsed.start.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}, ${fmtTime(parsed.start)} – ${fmtTime(parsed.end)}`;
+      preview.append(
+        row("Title", parsed.title || "(untitled)"),
+        row("When", whenStr),
+        row("Calendar", cal ? cal.summary : "(default)"),
+      );
+      liveRegion.textContent = `Parsed: ${parsed.title}, ${whenStr}`;
+      function row(k, v) { return h("div", { class: "row" }, h("div", { class: "k", text: k }), h("div", { class: "v", text: v })); }
+    }
+
+    input.addEventListener("input", () => doParse(input.value));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(); }
+    });
+    confirmBtn.addEventListener("click", commit);
+
+    async function commit() {
+      if (!parsed) return;
+      if (!confirmWrite()) return;
+      const cal = parsed.calendarId || state.calendars.find((c) => c.primary)?.id || state.calendars[0]?.id;
+      const resource = buildEventResource({
+        title: parsed.title, start: parsed.start, end: parsed.end,
+        allDay: parsed.allDay, description: "", reminderMin: String(prefs.reminderMinutes),
+      });
+      confirmBtn.disabled = true; confirmBtn.textContent = "Creating…";
+      try {
+        await Api.createEvent(cal, resource);
+        toast(`Created “${parsed.title}”`);
+        closeModal();
+        await loadEvents();
+      } catch (err) {
+        confirmBtn.disabled = false; confirmBtn.textContent = "Confirm";
+        toast("Create failed: " + (err.status || err.message), "err");
+      }
+    }
+
+    openModal(modal);
+    renderPreview();
+  }
+
+  function debounce(fn, ms) {
+    let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  }
+
+  /* --- The ladder: L1 bridge → L2 WebGPU → C1 BYOK → deterministic floor --- */
+  async function parseEvent(text) {
+    const byok = await Vault.get("byok");
+    // C1 (BYOK) is explicit user opt-in and most reliable, so try it first when present.
+    if (byok && byok.key) {
+      try { const r = await parseWithByok(text, byok); if (r) return { result: r, tier: `BYOK · ${byok.provider}` }; } catch (e) { console.warn("BYOK parse failed", e); }
+    }
+    // L1: local bridge (Ollama / LM Studio) — only if reachable.
+    try { const r = await parseWithBridge(text); if (r) return { result: r, tier: "L1 · local bridge" }; } catch (e) { /* not running, fine */ }
+    // L2: WebGPU + Transformers.js — only if explicitly enabled (heavy first-load).
+    if (localStorage.getItem("tide.l2") === "on" && "gpu" in navigator) {
+      try { const r = await parseWithWebGPU(text); if (r) return { result: r, tier: "L2 · WebGPU" }; } catch (e) { console.warn("L2 failed", e); }
+    }
+    // Floor.
+    return { result: parseDeterministic(text), tier: "deterministic" };
+  }
+
+  function parsePromptSchema(text) {
+    const now = new Date();
+    return `You convert a phrase into a calendar event. Today is ${now.toString()} (timezone ${Intl.DateTimeFormat().resolvedOptions().timeZone}).
+Reply with ONLY a JSON object, no prose: {"title": string, "start": ISO8601 with offset, "end": ISO8601 with offset, "allDay": boolean}.
+If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
+  }
+  function coerceLLM(obj, text) {
+    if (!obj) return null;
+    const start = new Date(obj.start), end = new Date(obj.end || obj.start);
+    if (isNaN(start)) return null;
+    return {
+      title: (obj.title || stripTimeWords(text) || "Untitled").trim(),
+      start, end: isNaN(end) || end <= start ? new Date(start.getTime() + 3600000) : end,
+      allDay: !!obj.allDay, calendarId: null,
+    };
+  }
+  function extractJson(s) {
+    const m = s.match(/\{[\s\S]*\}/); if (!m) return null;
+    try { return JSON.parse(m[0]); } catch { return null; }
+  }
+
+  async function parseWithBridge(text) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 1500);
+    try {
+      const r = await fetch(`${BRIDGE_URL}/api/generate`, {
+        method: "POST", signal: ctrl.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: localStorage.getItem("tide.bridgeModel") || "llama3.2", prompt: parsePromptSchema(text), stream: false, format: "json" }),
+      });
+      if (!r.ok) return null;
+      const data = await r.json();
+      return coerceLLM(extractJson(data.response || ""), text);
+    } finally { clearTimeout(t); }
+  }
+
+  async function parseWithByok(text, byok) {
+    if (byok.provider === "anthropic") {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": byok.key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({ model: byok.model || "claude-haiku-4-5", max_tokens: 300, messages: [{ role: "user", content: parsePromptSchema(text) }] }),
+      });
+      if (!r.ok) throw new Error("anthropic " + r.status);
+      const data = await r.json();
+      const txt = (data.content || []).map((c) => c.text || "").join("");
+      return coerceLLM(extractJson(txt), text);
+    }
+    // OpenAI-compatible (OpenAI, Groq, etc.)
+    const base = byok.base || "https://api.openai.com/v1";
+    const r = await fetch(base.replace(/\/$/, "") + "/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer " + byok.key },
+      body: JSON.stringify({ model: byok.model || "gpt-4o-mini", temperature: 0, response_format: { type: "json_object" }, messages: [{ role: "user", content: parsePromptSchema(text) }] }),
+    });
+    if (!r.ok) throw new Error("openai " + r.status);
+    const data = await r.json();
+    return coerceLLM(extractJson(data.choices?.[0]?.message?.content || ""), text);
+  }
+
+  let _l2gen = null;
+  async function parseWithWebGPU(text) {
+    if (!_l2gen) {
+      const { pipeline } = await import(/* @vite-ignore */ TRANSFORMERS_CDN);
+      _l2gen = await pipeline("text-generation", L2_MODEL, { device: "webgpu", dtype: "q4" });
+    }
+    const out = await _l2gen([{ role: "user", content: parsePromptSchema(text) }], { max_new_tokens: 200, do_sample: false });
+    const txt = out[0]?.generated_text?.at?.(-1)?.content || "";
+    return coerceLLM(extractJson(txt), text);
+  }
+
+  /* ---------------- Deterministic parser (the floor) ------------------- */
+  const WEEKDAYS = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sun: 0, mon: 1, tue: 2, tues: 2, wed: 3, thu: 4, thur: 4, thurs: 4, fri: 5, sat: 6 };
+  const MONTHS = { jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11 };
+
+  function stripTimeWords(text) {
+    return text
+      .replace(/\b(today|tonight|tomorrow|tmrw|tmr|next|this|on|at|from|to|for|by)\b/gi, " ")
+      .replace(/\b(\d{1,2})(:\d{2})?\s?(am|pm)\b/gi, " ")
+      .replace(/\b\d{1,2}:\d{2}\b/g, " ")
+      .replace(/\b(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, " ")
+      .replace(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b/gi, " ")
+      .replace(/\b\d{1,2}(st|nd|rd|th)?\b/gi, " ")
+      .replace(/\s{2,}/g, " ").trim();
+  }
+
+  function parseDeterministic(text, now = new Date()) {
+    let t = " " + text.toLowerCase() + " ";
+    let date = null;          // a Date at local midnight of the target day
+    let hour = null, minute = 0;
+    let endHour = null, endMinute = 0;
+    let durationMin = null;
+    let allDay = false;
+    const consumed = [];      // regexes to strip from title later
+
+    const mark = (re) => consumed.push(re);
+
+    // --- explicit date: month name + day (e.g. "june 12", "12 jun")
+    let m = t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/);
+    if (m) { date = ymdLocal(now.getFullYear(), MONTHS[m[1]], +m[2]); if (date < startOfDay(now)) date.setFullYear(now.getFullYear() + 1); mark(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\b/); }
+    if (!date) { m = t.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b/); if (m) { date = ymdLocal(now.getFullYear(), MONTHS[m[2]], +m[1]); if (date < startOfDay(now)) date.setFullYear(now.getFullYear() + 1); mark(/\b\d{1,2}(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b/); } }
+
+    // --- numeric date m/d or d/m (assume m/d for US-ish, fall back sane)
+    if (!date) {
+      m = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+      if (m) {
+        let mo = +m[1] - 1, da = +m[2];
+        if (mo > 11) { [mo, da] = [da - 1, mo + 1]; }
+        let yr = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : now.getFullYear();
+        date = ymdLocal(yr, mo, da);
+        if (!m[3] && date < startOfDay(now)) date.setFullYear(yr + 1);
+        mark(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/);
+      }
+    }
+
+    // --- relative day words
+    if (!date) {
+      if (/\btoday\b/.test(t)) { date = startOfDay(now); mark(/\btoday\b/); }
+      else if (/\btonight\b/.test(t)) { date = startOfDay(now); if (hour == null) { hour = 19; } mark(/\btonight\b/); }
+      else if (/\b(tomorrow|tmrw|tmr)\b/.test(t)) { date = addDays(startOfDay(now), 1); mark(/\b(tomorrow|tmrw|tmr)\b/); }
+      else if (/\bday after tomorrow\b/.test(t)) { date = addDays(startOfDay(now), 2); mark(/\bday after tomorrow\b/); }
+    }
+
+    // --- "in N days/weeks"
+    if (!date) { m = t.match(/\bin\s+(\d{1,2})\s+(day|days|week|weeks)\b/); if (m) { const n = +m[1] * (m[2].startsWith("week") ? 7 : 1); date = addDays(startOfDay(now), n); mark(/\bin\s+\d{1,2}\s+(day|days|week|weeks)\b/); } }
+
+    // --- weekday names (optionally "next")
+    if (!date) {
+      m = t.match(/\b(next\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)\b/);
+      if (m) {
+        const target = WEEKDAYS[m[2]];
+        let delta = (target - now.getDay() + 7) % 7;
+        if (delta === 0) delta = 7;                 // upcoming, not today
+        if (m[1]) delta = ((target - now.getDay() + 7) % 7) || 7; // "next" = the upcoming one too; +7 only if same-day
+        if (m[1] && delta <= 0) delta += 7;
+        date = addDays(startOfDay(now), delta);
+        mark(/\b(next\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)\b/);
+      }
+    }
+
+    // --- time range: "1-2pm", "1pm-2pm", "from 3 to 4pm", "9 to 10:30am"
+    let rng = t.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|to|until|till)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
+    if (rng) {
+      let h1 = +rng[1], m1 = +(rng[2] || 0), ap1 = rng[3];
+      let h2 = +rng[4], m2 = +(rng[5] || 0), ap2 = rng[6];
+      if (!ap1) ap1 = ap2; // "1-2pm"
+      hour = to24(h1, ap1); minute = m1;
+      endHour = to24(h2, ap2); endMinute = m2;
+      mark(/\b\d{1,2}(?::\d{2})?\s*(am|pm)?\s*(?:-|–|to|until|till)\s*\d{1,2}(?::\d{2})?\s*(am|pm)\b/);
+    }
+
+    // --- single time: "at 1pm", "1pm", "13:00", "at 9", "noon"
+    if (hour == null) {
+      if (/\bnoon\b/.test(t)) { hour = 12; mark(/\bnoon\b/); }
+      else if (/\bmidnight\b/.test(t)) { hour = 0; mark(/\bmidnight\b/); }
+      else {
+        m = t.match(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
+        if (m) { hour = to24(+m[1], m[3]); minute = +(m[2] || 0); mark(/\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(am|pm)\b/); }
+        else {
+          m = t.match(/\b(\d{1,2}):(\d{2})\b/);
+          if (m) { hour = +m[1]; minute = +m[2]; mark(/\b\d{1,2}:\d{2}\b/); }
+          else { m = t.match(/\bat\s+(\d{1,2})\b/); if (m) { let hh = +m[1]; if (hh >= 1 && hh <= 7) hh += 12; hour = hh; mark(/\bat\s+\d{1,2}\b/); } }
+        }
+      }
+    }
+
+    // --- duration: "for 30 min", "for 1h", "for 1.5 hours", "90 minutes"
+    m = t.match(/\bfor\s+(\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hours|m|min|mins|minute|minutes)\b/) || t.match(/\b(\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hours|min|mins|minute|minutes)\b/);
+    if (m) { const n = parseFloat(m[1]); durationMin = /^h/.test(m[2]) ? Math.round(n * 60) : Math.round(n); mark(/\bfor\s+\d+(?:\.\d+)?\s*(h|hr|hrs|hour|hours|m|min|mins|minute|minutes)\b/); mark(/\b\d+(?:\.\d+)?\s*(h|hr|hrs|hour|hours|min|mins|minute|minutes)\b/); }
+
+    // --- assemble
+    if (!date) date = startOfDay(now);
+    if (hour == null && endHour == null) {
+      // no clock time → infer one from a meal word or a stated duration; else all-day
+      const meal = t.match(/\b(breakfast|lunch|dinner|coffee)\b/);
+      if (meal) { hour = { breakfast: 8, coffee: 10, lunch: 12, dinner: 19 }[meal[1]]; minute = 0; }
+      else if (durationMin != null) { hour = 9; minute = 0; } // a duration implies a timed event
+      else allDay = true;
+    }
+
+    let start, end;
+    if (allDay) {
+      start = new Date(date); end = addDays(new Date(date), 1);
+    } else {
+      start = new Date(date); start.setHours(hour, minute, 0, 0);
+      if (endHour != null) { end = new Date(date); end.setHours(endHour, endMinute, 0, 0); if (end <= start) end = new Date(start.getTime() + 3600000); }
+      else end = new Date(start.getTime() + (durationMin || 60) * 60000);
+    }
+
+    // --- title: strip everything we consumed
+    let title = " " + text + " ";
+    for (const re of consumed) title = title.replace(new RegExp(re.source, "gi"), " ");
+    title = title
+      .replace(/\b(on|at|from|to|for|by|this|next|in|until|till)\b/gi, " ")
+      .replace(/\s{2,}/g, " ").replace(/^[\s,.-]+|[\s,.-]+$/g, "").trim();
+    if (title) title = title[0].toUpperCase() + title.slice(1);
+
+    return { title: title || "Untitled", start, end, allDay, calendarId: null };
+  }
+
+  function to24(h12, ap) {
+    let h = h12 % 12;
+    if (ap === "pm") h += 12;
+    if (!ap && h12 === 12) h = 12;
+    return h;
+  }
+  function ymdLocal(y, mo, d) { const x = new Date(y, mo, d); x.setHours(0, 0, 0, 0); return x; }
+
+  /* ====================================================================== *
+   *  Agent face — window.tide.agent (pure functions over the same client)  *
+   * ====================================================================== */
+  window.tide = {
+    get connected() { return Auth.isConnected(); },
+    account: () => (Auth.account() ? { email: Auth.account().email, sub: Auth.account().sub } : null),
+    agent: {
+      async listEvents({ from, to, calendarIds } = {}) {
+        await ensureCalendars();
+        const f = from ? new Date(from) : startOfDay(new Date());
+        const t = to ? new Date(to) : addDays(f, 7);
+        const cals = (calendarIds && calendarIds.length ? state.calendars.filter((c) => calendarIds.includes(c.id)) : state.calendars.filter((c) => state.selected.has(c.id)));
+        const lists = await Promise.all(cals.map((c) => Api.listEvents(c.id, f, t).then((items) => items.map((e) => normalizeEvent(e, c)))));
+        return lists.flat().sort((a, b) => new Date(a.start) - new Date(b.start));
+      },
+      async createEvent({ title, start, end, calendarId, description } = {}) {
+        await ensureCalendars();
+        if (!title) throw new Error("title required");
+        const s = new Date(start);
+        const e = end ? new Date(end) : new Date(s.getTime() + 3600000);
+        const cal = calendarId || state.calendars.find((c) => c.primary)?.id || state.calendars[0]?.id;
+        const resource = buildEventResource({ title, start: s, end: e, allDay: false, description: description || "", reminderMin: String(prefs.reminderMinutes) });
+        const created = await Api.createEvent(cal, resource);
+        return normalizeEvent(created, state.calendars.find((c) => c.id === cal));
+      },
+      async findSlots({ durationMin = 30, window: win, workingHours, calendarIds } = {}) {
+        await ensureCalendars();
+        const from = win ? new Date(win.from) : startOfDay(new Date());
+        const to = win ? new Date(win.to) : addDays(from, 7);
+        const wh = workingHours || prefs.workingHours;
+        const cals = (calendarIds && calendarIds.length ? state.calendars.filter((c) => calendarIds.includes(c.id)) : state.calendars.filter((c) => state.selected.has(c.id)));
+        const lists = await Promise.all(cals.map((c) => Api.listEvents(c.id, from, to)));
+        const busy = lists.flat().filter((e) => !isAllDay(e)).map((e) => [eventStart(e).getTime(), eventEnd(e).getTime()]).sort((a, b) => a[0] - b[0]);
+        const slots = [];
+        const durMs = durationMin * 60000;
+        for (let d = startOfDay(from); d < to; d = addDays(d, 1)) {
+          let cursor = new Date(d); cursor.setHours(Math.floor(wh.start), (wh.start % 1) * 60, 0, 0);
+          const dayEnd = new Date(d); dayEnd.setHours(Math.floor(wh.end), (wh.end % 1) * 60, 0, 0);
+          if (cursor < from) cursor = new Date(Math.max(cursor.getTime(), from.getTime()));
+          let c = cursor.getTime();
+          const endLimit = Math.min(dayEnd.getTime(), to.getTime());
+          for (const [bs, be] of busy) {
+            if (be <= c || bs >= endLimit) continue;
+            if (bs - c >= durMs) slots.push({ start: new Date(c).toISOString(), end: new Date(bs).toISOString() });
+            c = Math.max(c, be);
+          }
+          if (endLimit - c >= durMs) slots.push({ start: new Date(c).toISOString(), end: new Date(endLimit).toISOString() });
+        }
+        return slots;
+      },
+    },
+  };
+  function normalizeEvent(e, cal) {
+    return {
+      id: e.id, calendarId: cal ? cal.id : e._calId,
+      title: e.summary || "(busy)",
+      start: eventStart(e).toISOString(), end: eventEnd(e).toISOString(),
+      allDay: isAllDay(e), location: e.location || null, description: e.description || null,
+      htmlLink: e.htmlLink || null,
+    };
+  }
+
+  /* ====================================================================== *
+   *  In-tab nudges (best-effort only; Google reminders are the guarantee)  *
+   * ====================================================================== */
+  let nudgeTimers = [];
+  function scheduleNudges() {
+    nudgeTimers.forEach(clearTimeout); nudgeTimers = [];
+    if (!prefs.inTabNudges) return;
+    if (!("Notification" in window)) return;
+    const now = Date.now();
+    for (const e of state.events) {
+      if (isAllDay(e)) continue;
+      const lead = (prefs.reminderMinutes || 10) * 60000;
+      const fireAt = eventStart(e).getTime() - lead;
+      if (fireAt > now && fireAt - now < 6 * 3600000) {
+        const id = setTimeout(() => {
+          if (Notification.permission === "granted") {
+            new Notification("Upcoming: " + (e.summary || "event"), { body: fmtTime(eventStart(e)) + " — in-tab nudge (Google delivers the real reminder)" });
+          }
+        }, fireAt - now);
+        nudgeTimers.push(id);
+      }
+    }
+  }
+
+  /* ====================================================================== *
+   *  Account / settings modal                                              *
+   * ====================================================================== */
+  function openSettings() {
+    const acct = Auth.account();
+    const body = h("div", {});
+
+    // Connection
+    body.append(
+      h("div", { class: "help-section" },
+        h("h3", { text: "Connection" }),
+        h("dl", { class: "kv" },
+          h("dt", { text: "Account" }), h("dd", { text: acct ? acct.email : "—" }),
+          h("dt", { text: "Access token" }), h("dd", { class: "small muted", text: "•••• " + Auth.fingerprint() + " (in memory; refresh token in IndexedDB)" }),
+        ),
+      ),
+    );
+
+    // View prefs
+    const viewSel = h("select", {}, h("option", { value: "week", selected: prefs.defaultView === "week" }, "Week"), h("option", { value: "day", selected: prefs.defaultView === "day" }, "Day"));
+    const weekStartSel = h("select", {}, h("option", { value: "1", selected: prefs.weekStart === 1 }, "Monday"), h("option", { value: "0", selected: prefs.weekStart === 0 }, "Sunday"));
+    const whStart = h("input", { type: "number", min: "0", max: "23", value: String(prefs.workingHours.start) });
+    const whEnd = h("input", { type: "number", min: "1", max: "24", value: String(prefs.workingHours.end) });
+    const remDefault = h("input", { type: "number", min: "0", max: "40320", value: String(prefs.reminderMinutes) });
+    const nudgeChk = h("input", { type: "checkbox" }); nudgeChk.checked = prefs.inTabNudges;
+
+    body.append(h("div", { class: "help-section" },
+      h("h3", { text: "Preferences" }),
+      h("div", { class: "row2" },
+        h("label", { class: "field" }, h("span", { text: "Default view" }), viewSel),
+        h("label", { class: "field" }, h("span", { text: "Week starts" }), weekStartSel)),
+      h("div", { class: "row2" },
+        h("label", { class: "field" }, h("span", { text: "Working hours start" }), whStart),
+        h("label", { class: "field" }, h("span", { text: "Working hours end" }), whEnd)),
+      h("label", { class: "field" }, h("span", { text: "Default reminder (minutes before)" }), remDefault),
+      h("label", { class: "chk" }, nudgeChk, h("span", { text: "In-tab nudges while a Tide tab is open (best-effort)" })),
+    ));
+
+    // Calendars
+    const calWrap = h("div", { class: "callist" });
+    for (const c of state.calendars) {
+      const cb = h("input", { type: "checkbox" }); cb.checked = state.selected.has(c.id);
+      cb.addEventListener("change", () => { if (cb.checked) state.selected.add(c.id); else state.selected.delete(c.id); });
+      calWrap.append(h("label", { class: "calrow" }, cb, h("span", { class: "calswatch", style: { background: c.color } }), h("span", { class: "calname", text: c.summary + (c.primary ? "  ·  primary" : "") })));
+    }
+    body.append(h("div", { class: "help-section" }, h("h3", { text: "Calendars" }), calWrap));
+
+    // BYOK
+    const byokDetails = h("details", {},
+      h("summary", { class: "small muted", style: { cursor: "pointer", marginBottom: "8px" }, text: "Bring-your-own-key (optional, for smarter command-bar parsing)" }));
+    const providerSel = h("select", {}, h("option", { value: "anthropic" }, "Anthropic"), h("option", { value: "openai" }, "OpenAI-compatible"));
+    const keyIn = h("input", { type: "password", placeholder: "API key — stored only in this browser's IndexedDB", autocomplete: "off" });
+    const modelIn = h("input", { type: "text", placeholder: "model (e.g. claude-haiku-4-5 / gpt-4o-mini)" });
+    Vault.get("byok").then((b) => { if (b) { providerSel.value = b.provider; modelIn.value = b.model || ""; keyIn.placeholder = "•••• saved (leave blank to keep)"; } });
+    byokDetails.append(
+      h("div", { class: "row2" },
+        h("label", { class: "field" }, h("span", { text: "Provider" }), providerSel),
+        h("label", { class: "field" }, h("span", { text: "Model" }), modelIn)),
+      h("label", { class: "field" }, h("span", { text: "API key" }), keyIn),
+      h("div", { class: "small muted", text: "Key never leaves this browser. The deterministic parser remains the floor with no key." }),
+    );
+    body.append(h("div", { class: "help-section" }, h("h3", { text: "Command-bar model" }), byokDetails));
+
+    // Danger zone
+    const disconnectBtn = h("button", { class: "btn danger", text: "Disconnect & erase all local data" });
+    disconnectBtn.addEventListener("click", async () => {
+      await Auth.disconnect();
+      closeModal();
+      location.reload();
+    });
+    body.append(h("div", { class: "help-section" }, h("h3", { text: "Local data" }),
+      h("p", { class: "small muted", text: "Disconnect clears tokens, prefs and cache from this browser's IndexedDB. Nothing of yours is stored anywhere else." }),
+      disconnectBtn));
+
+    const saveBtn = h("button", { class: "btn primary", text: "Save" });
+    saveBtn.addEventListener("click", async () => {
+      prefs.defaultView = viewSel.value;
+      prefs.weekStart = +weekStartSel.value;
+      prefs.workingHours = { start: clampNum(whStart.value, 0, 23, 9), end: clampNum(whEnd.value, 1, 24, 18) };
+      prefs.reminderMinutes = clampNum(remDefault.value, 0, 40320, 10);
+      prefs.inTabNudges = nudgeChk.checked;
+      prefs.selectedCalendars = [...state.selected];
+      await savePrefs();
+      const key = keyIn.value.trim();
+      if (key) await Vault.set("byok", { provider: providerSel.value, key, model: modelIn.value.trim(), base: providerSel.value === "openai" ? "https://api.openai.com/v1" : undefined });
+      if (prefs.inTabNudges && "Notification" in window && Notification.permission === "default") Notification.requestPermission();
+      closeModal();
+      $("#calBody").dataset.scrolled = ""; // re-scroll to working hours
+      await loadEvents();
+      updateAcctChip();
+    });
+    const cancel = h("button", { class: "btn ghost", text: "Close" });
+    cancel.addEventListener("click", closeModal);
+
+    openModal(modalShell({ title: "Account & settings", body, foot: [cancel, saveBtn], wide: true }));
+  }
+  function clampNum(v, lo, hi, dflt) { const n = parseInt(v, 10); return isNaN(n) ? dflt : Math.max(lo, Math.min(hi, n)); }
+
+  /* ====================================================================== *
+   *  Help modal (incl. the composition story)                              *
+   * ====================================================================== */
+  function openHelp() {
+    const keyRow = (k, d) => [h("span", { class: "kbd", text: k }), h("span", { text: d })];
+    const body = h("div", {},
+      h("div", { class: "help-section" },
+        h("h3", { text: "Keyboard" }),
+        h("div", { class: "help-keys" },
+          ...keyRow("⌘/Ctrl K", "Command bar — type an event in plain words"),
+          ...keyRow("N", "New event"),
+          ...keyRow("T", "Today"),
+          ...keyRow("W", "Week view"),
+          ...keyRow("D", "Day view"),
+          ...keyRow("← / →", "Previous / next period"),
+          ...keyRow("?", "This help"),
+          ...keyRow("Esc", "Close"),
+        )),
+      h("div", { class: "help-section" },
+        h("h3", { text: "Sovereignty" }),
+        h("p", { class: "small muted", text: "Tide is one static HTML file. It talks straight to Google with PKCE OAuth; your tokens live only in this browser's IndexedDB and never touch a server. No accounts, no telemetry. Disconnect erases everything locally." })),
+      h("div", { class: "help-section" },
+        h("h3", { text: "Composition, not welding" }),
+        h("p", { class: "small muted", text: "Tide shows your week and captures events — that's the whole job. It deliberately does not transcribe or take notes. When you want meeting capture, Tide emits the event and Steno records it: two small tools over shared primitives, not one bloated app." })),
+      h("div", { class: "help-section" },
+        h("h3", { text: "Agent face" }),
+        h("p", { class: "small muted" },
+          "Tide is also a schedule API. From the console: ",
+          h("code", { text: "tide.agent.findSlots({durationMin:30, window:{from, to}})" }),
+          " — plus ", h("code", { text: "listEvents" }), " and ", h("code", { text: "createEvent" }), ".")),
+    );
+    const close = h("button", { class: "btn primary", text: "Close" });
+    close.addEventListener("click", closeModal);
+    openModal(modalShell({ title: "Tide", body, foot: [close] }));
+  }
+
+  /* ====================================================================== *
+   *  Toasts                                                                 *
+   * ====================================================================== */
+  function toast(msg, kind = "ok", { action } = {}) {
+    const t = h("div", { class: "toast" + (kind === "err" ? " err" : ""), role: "status" }, h("span", { text: msg }));
+    if (action) { const b = h("button", { text: action.label }); b.addEventListener("click", () => { action.fn(); t.remove(); }); t.append(b); }
+    $("#toasts").append(t);
+    setTimeout(() => t.remove(), kind === "err" ? 6000 : 3200);
+  }
+
+  /* ====================================================================== *
+   *  Account chip                                                          *
+   * ====================================================================== */
+  function updateAcctChip() {
+    const acct = Auth.account();
+    $("#acctLabel").textContent = acct ? acct.email : "Not connected";
+  }
+
+  /* ====================================================================== *
+   *  Keyboard map (single-letter only when not typing in a field)          *
+   * ====================================================================== */
+  function isTyping(el) {
+    return el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
+  }
+  document.addEventListener("keydown", (e) => {
+    // global: command bar + escape always available
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if (Auth.isConnected()) openCommandBar(); return; }
+    if (e.key === "Escape" && activeModal) { e.preventDefault(); closeModal(); return; }
+    if (activeModal || isTyping(document.activeElement) || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!Auth.isConnected()) return;
+    switch (e.key) {
+      case "t": case "T": state.anchor = startOfDay(new Date()); loadEvents(); break;
+      case "w": case "W": setView("week"); break;
+      case "d": case "D": setView("day"); break;
+      case "n": case "N": openEventEditor(); break;
+      case "ArrowLeft": stepPeriod(-1); break;
+      case "ArrowRight": stepPeriod(1); break;
+      case "?": openHelp(); break;
+      default: return;
+    }
+    e.preventDefault();
+  });
+
+  function setView(v) {
+    if (state.view === v) return;
+    state.view = v;
+    $("#calBody").dataset.scrolled = "";
+    loadEvents();
+  }
+  function stepPeriod(dir) {
+    const span = state.view === "day" ? 1 : 7;
+    state.anchor = addDays(state.anchor, dir * span);
+    loadEvents();
+  }
+
+  /* ====================================================================== *
+   *  Wiring static controls                                                *
+   * ====================================================================== */
+  $("#weekViewBtn").addEventListener("click", () => setView("week"));
+  $("#dayViewBtn").addEventListener("click", () => setView("day"));
+  $("#todayBtn").addEventListener("click", () => { state.anchor = startOfDay(new Date()); loadEvents(); });
+  $("#prevBtn").addEventListener("click", () => stepPeriod(-1));
+  $("#nextBtn").addEventListener("click", () => stepPeriod(1));
+  $("#newEventBtn").addEventListener("click", () => openEventEditor());
+  $("#cmdOpenBtn").addEventListener("click", () => openCommandBar());
+  $("#helpBtn").addEventListener("click", () => openHelp());
+  $("#acctBtn").addEventListener("click", () => openSettings());
+  $("#connectBtn").addEventListener("click", () => Auth.begin());
+
+  window.addEventListener("online", () => { state.offline = false; $("#offlineBanner").classList.add("hidden"); if (Auth.isConnected()) loadEvents(); });
+  window.addEventListener("offline", () => { state.offline = true; $("#offlineBanner").classList.remove("hidden"); });
+
+  // refresh the now-line every minute
+  setInterval(() => { if (Auth.isConnected() && !activeModal) { const nl = $(".nowline"); if (nl) { const now = new Date(); nl.style.top = ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_H + "px"; } } }, 60000);
+
+  /* ====================================================================== *
+   *  Boot                                                                  *
+   * ====================================================================== */
+  function renderConnect(reauth = false) {
+    $("#app").classList.add("hidden");
+    $("#connectScreen").classList.remove("hidden");
+    if (!Auth.clientConfigured()) showConfigWarning();
+    if (reauth) toast("Your Google session expired — reconnect to continue.", "err");
+  }
+  async function showApp() {
+    $("#connectScreen").classList.add("hidden");
+    $("#app").classList.remove("hidden");
+    state.view = prefs.defaultView;
+    updateAcctChip();
+    await ensureCalendars();
+    await loadEvents();
+  }
+
+  async function boot() {
+    await loadPrefs();
+    // 1) returning from Google?
+    const came = await Auth.handleRedirect();
+    if (came) { await showApp(); return; }
+    // 2) stored connection?
+    const has = await Auth.loadStored();
+    if (has) {
+      try { await Auth.token(); await showApp(); return; }
+      catch (e) { console.warn("silent refresh failed", e); renderConnect(true); return; }
+    }
+    // 3) fresh
+    renderConnect(false);
+  }
+
+  boot().catch((e) => { console.error(e); renderConnect(false); toast("Startup error — see console.", "err"); });
+  </script>
+</body>
+</html>
