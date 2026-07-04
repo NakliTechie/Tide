@@ -20,7 +20,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-rccFCRR1p+yNdOoukaz+VSKHF2cB4BQQA+g9mkbJ/Nk=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-3vOfgDF/IcjatTAP+eU69qO5ndUFRXrzI1M83w+oZ+E=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -402,6 +402,10 @@
     .color-sw.sel { border-color: var(--text); }
     .color-custom { display: flex; align-items: center; gap: 8px; margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--border); }
     .color-custom input[type=color] { width: 34px; height: 26px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; background: none; cursor: pointer; }
+    .kv a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
+    .kv a.joinlink { display: inline-block; font-weight: 600; text-decoration: none; padding: 4px 12px; border-radius: 7px;
+      background: var(--accent-soft); color: var(--accent); word-break: break-all; }
+    .kv a.joinlink:hover { filter: brightness(0.97); }
     .sb-calname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .sb-add { margin-top: 10px; width: 100%; font-size: 13px; padding: 9px; border: 1px dashed var(--border-strong);
       border-radius: 8px; background: transparent; color: var(--text-dim); cursor: pointer; }
@@ -617,7 +621,9 @@
         const t = db.transaction(STORE, mode);
         const s = t.objectStore(STORE);
         const out = fn(s);
-        t.oncomplete = () => res(out && out.result !== undefined ? out.result : out);
+        // Return the request's result (the stored value, or undefined for a missing
+        // key) — never the IDBRequest object itself. Callers of set/del ignore it.
+        t.oncomplete = () => res(out && "result" in out ? out.result : out);
         t.onerror = () => rej(t.error);
         t.onabort = () => rej(t.error);
       });
@@ -746,7 +752,7 @@
 
     async function loadStored() {
       const stored = await Vault.get("connections");
-      conns = (stored || []).map((c) => ({
+      conns = (Array.isArray(stored) ? stored : []).map((c) => ({
         id: c.id, email: c.email, picture: c.picture || null,
         refreshToken: c.refreshToken || null, token: null, expiresAt: 0,
         needsReconnect: !c.refreshToken,
@@ -1411,19 +1417,41 @@
   /* ====================================================================== *
    *  Event detail                                                          *
    * ====================================================================== */
+  // --- Detect URLs / meeting links in free text and render them clickable ---
+  const URL_RE = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"\]])/g;
+  const MEETING_RE = /https?:\/\/[^\s]*(?:zoom\.us|meet\.google\.com|teams\.microsoft\.com|teams\.live\.com|webex\.com|whereby\.com|meet\.jit\.si|chime\.aws|bluejeans\.com|gotomeeting\.com|around\.co)[^\s]*/i;
+  function firstMeetingLink(...texts) {
+    for (const t of texts) { if (!t) continue; const m = t.match(MEETING_RE); if (m) return m[0].replace(/[.,;:!?'")\]]+$/, ""); }
+    return null;
+  }
+  function linkedText(text) {
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    text.replace(URL_RE, (url, _g, idx) => {
+      if (idx > last) frag.append(document.createTextNode(text.slice(last, idx)));
+      frag.append(h("a", { href: url, target: "_blank", rel: "noopener noreferrer", text: url }));
+      last = idx + url.length;
+      return url;
+    });
+    if (last < text.length) frag.append(document.createTextNode(text.slice(last)));
+    return frag;
+  }
+
   function openEventDetail(e) {
     const cal = state.calendars.find((c) => c.key === e._calKey) || state.calendars.find((c) => c.id === e._calId);
     const when = isAllDay(e)
       ? eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }) + " · all day"
       : `${eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${fmtTime(eventStart(e))} – ${fmtTime(eventEnd(e))}`;
+    // A meeting link may be Google's own hangoutLink, or buried in the notes/location.
+    const joinLink = e.hangoutLink || firstMeetingLink(e.description, e.location);
     const body = h("div", {},
       h("dl", { class: "kv" },
         h("dt", { text: "When" }), h("dd", { text: when }),
+        joinLink ? h("dt", { text: "Join" }) : null,
+        joinLink ? h("dd", {}, h("a", { class: "joinlink", href: joinLink, target: "_blank", rel: "noopener noreferrer", text: joinLink })) : null,
         cal ? h("dt", { text: "Calendar" }) : null, cal ? h("dd", { text: cal.summary }) : null,
-        e.location ? h("dt", { text: "Where" }) : null, e.location ? h("dd", { text: e.location }) : null,
-        e.description ? h("dt", { text: "Notes" }) : null, e.description ? h("dd", { text: e.description }) : null,
-        e.hangoutLink ? h("dt", { text: "Meet" }) : null,
-        e.hangoutLink ? h("dd", {}, h("a", { href: e.hangoutLink, target: "_blank", rel: "noopener", text: e.hangoutLink })) : null,
+        e.location ? h("dt", { text: "Where" }) : null, e.location ? h("dd", {}, linkedText(e.location)) : null,
+        e.description ? h("dt", { text: "Notes" }) : null, e.description ? h("dd", {}, linkedText(e.description)) : null,
       ),
     );
     const writable = cal && (cal.accessRole === "owner" || cal.accessRole === "writer");
