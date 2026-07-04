@@ -6,6 +6,8 @@
   <title>Tide</title>
   <meta name="description" content="A single-file, keyboard-first calendar over your Google Calendar. No server, no account, no telemetry. Your token never leaves your browser." />
   <meta name="color-scheme" content="light dark" />
+  <!-- Google Identity Services (token client). Public client, no secret, no server. -->
+  <script src="https://accounts.google.com/gsi/client" async></script>
   <!--
     Content-Security-Policy.
     script-src uses 'self' for the (future) external module and the pinned
@@ -20,7 +22,8 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-Uvrg8jrFq+hMyXhF8WXi/mckZqggZjsngyRsC0ACriY=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-iIdS6hO0i4JMpC+jG3Q5CdqcggMn0mKn9wRV+vsDdZ0=' https://accounts.google.com https://cdn.jsdelivr.net;
+    frame-src https://accounts.google.com https://*.google.com;
     connect-src 'self'
       https://accounts.google.com
       https://oauth2.googleapis.com
@@ -372,10 +375,47 @@
     .help-section h3 { margin: 0 0 6px; font-size: 13px; }
     .help-keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; }
 
+    /* ------------------------------------------------------------------ *
+     * Sidebar — accounts + their calendars (Notion-style)                 *
+     * ------------------------------------------------------------------ */
+    .workspace { display: flex; flex: 1 1 auto; min-height: 0; }
+    .cal { min-width: 0; }
+    .sidebar {
+      width: 244px; flex: 0 0 244px; box-sizing: border-box;
+      border-right: 1px solid var(--border); background: var(--surface);
+      overflow-y: auto; overflow-x: hidden; padding: 10px 8px 20px;
+    }
+    .sb-acct { display: flex; align-items: center; gap: 6px; padding: 10px 6px 4px; }
+    .sb-acct-email { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; letter-spacing: .01em;
+      color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sb-x { flex: 0 0 auto; width: 24px; height: 24px; color: var(--text-faint); }
+    .sb-x:hover { color: var(--danger); }
+    .sb-btn { flex: 0 0 auto; font-size: 11px; padding: 3px 9px; border: 1px solid var(--border-strong);
+      border-radius: 6px; background: var(--accent-soft); color: var(--accent); cursor: pointer; font-weight: 600; }
+    .sb-cals { display: flex; flex-direction: column; gap: 1px; margin-bottom: 6px; }
+    .sb-cal { display: flex; align-items: center; gap: 9px; padding: 6px 6px; border-radius: 7px; cursor: pointer; font-size: 13px; color: var(--text); }
+    .sb-cal:hover { background: var(--surface-2); }
+    .sb-cal input { accent-color: var(--accent); flex: 0 0 auto; margin: 0; }
+    .sb-dot { width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+    .sb-calname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sb-add { margin-top: 10px; width: 100%; font-size: 13px; padding: 9px; border: 1px dashed var(--border-strong);
+      border-radius: 8px; background: transparent; color: var(--text-dim); cursor: pointer; }
+    .sb-add:hover { background: var(--surface-2); color: var(--text); }
+    .acctlist { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+    .acctrow { display: flex; align-items: center; gap: 10px; }
+    .acctrow-email { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .btn.small { font-size: 12px; padding: 4px 10px; }
+
     @media (max-width: 720px) {
       .period { min-width: auto; font-size: 13px; }
       .brand .tide-sub { display: none; }
       .topbar { gap: 8px; padding: 0 8px; }
+    }
+    @media (max-width: 640px) {
+      .sidebar { width: 190px; flex-basis: 190px; }
+    }
+    @media (max-width: 520px) {
+      .sidebar { display: none; }
     }
   </style>
 </head>
@@ -431,13 +471,16 @@
 
     <div id="offlineBanner" class="banner hidden">Offline — showing last-read events. Writes are paused until you reconnect.</div>
 
-    <main class="cal" id="calRoot" aria-label="Calendar">
-      <div class="cal-head" id="calHead"></div>
-      <div class="cal-allday" id="calAllday"></div>
-      <div class="cal-body" id="calBody">
-        <div class="cal-grid" id="calGrid"></div>
-      </div>
-    </main>
+    <div class="workspace">
+      <aside class="sidebar" id="sidebar" aria-label="Accounts and calendars"></aside>
+      <main class="cal" id="calRoot" aria-label="Calendar">
+        <div class="cal-head" id="calHead"></div>
+        <div class="cal-allday" id="calAllday"></div>
+        <div class="cal-body" id="calBody">
+          <div class="cal-grid" id="calGrid"></div>
+        </div>
+      </main>
+    </div>
   </div>
 
   <!-- Connect screen -->
@@ -454,7 +497,7 @@
       <p>Your Google Calendar, rendered fast and keyboard-first. Nothing in between — your token stays in this browser and never touches a server.</p>
       <div id="configWarn" class="warn hidden"></div>
       <button class="btn primary" id="connectBtn" style="font-size:15px;padding:10px 18px">Connect Google Calendar</button>
-      <p class="fine">PKCE OAuth straight to Google. No account, no telemetry, no install. Tokens live only in this browser's IndexedDB.</p>
+      <p class="fine">Google sign-in straight from your browser — no client secret, no server, no telemetry. Access tokens stay in this tab; only which accounts you connect is saved locally. Add more accounts anytime.</p>
     </div>
   </div>
 
@@ -498,7 +541,8 @@
   // nakli-local-bridge / Ollama (L1). Tried, never required.
   const BRIDGE_URL = localStorage.getItem("tide.bridge") || "http://localhost:11434";
 
-  const CONNECTION_ID = "primary"; // v1 holds one connection; records are keyed so v1.x can add more.
+  // Auth model: Google Identity Services (GIS) token client — public, no secret,
+  // no server. Multiple accounts are held as a connections registry (below).
 
   /* ====================================================================== *
    *  Tiny DOM helpers (no innerHTML for untrusted data — textContent only)  *
@@ -558,7 +602,7 @@
         t.onabort = () => rej(t.error);
       });
     }
-    const key = (k) => `${CONNECTION_ID}:${k}`;
+    const key = (k) => k;
     return {
       get: (k) => tx("readonly", (s) => s.get(key(k))).then((r) => (r === undefined ? null : r)),
       set: (k, v) => tx("readwrite", (s) => s.put(v, key(k))),
@@ -576,167 +620,129 @@
   })();
 
   /* ====================================================================== *
-   *  PKCE helpers                                                           *
-   * ====================================================================== */
-  function b64url(buf) {
-    return btoa(String.fromCharCode(...new Uint8Array(buf)))
-      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-  function randString(len = 64) {
-    const a = new Uint8Array(len);
-    crypto.getRandomValues(a);
-    return b64url(a).slice(0, len);
-  }
-  async function sha256(str) {
-    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
-  }
-
-  /* ====================================================================== *
-   *  Auth — Authorization Code + PKCE, fully client-side.                   *
+   *  Auth — Google Identity Services (GIS) token client.                    *
+   *  Public client, no secret, no server. Multiple Google accounts are held *
+   *  in a connections registry; each account's access token lives only in   *
+   *  memory and is silently re-granted by GIS while its Google session is   *
+   *  alive. Only account identity (id/email) is persisted, never a token.   *
    * ====================================================================== */
   const Auth = (() => {
-    let access = null;      // { token, expiresAt } in memory primarily
-    let conn = null;        // { email, sub, refreshToken, scope }
+    // conns: [{ id(sub), email, picture, token, expiresAt, needsReconnect }]
+    let conns = [];
+    let tokenClient = null;
+    let pending = null; // { resolve, reject } for the in-flight requestAccessToken
 
-    function redirectUri() { return location.origin + location.pathname; }
     function clientConfigured() { return GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith("YOUR_"); }
 
-    async function begin() {
-      if (!clientConfigured()) { showConfigWarning(); return; }
-      const verifier = randString(64);
-      const state = randString(24);
-      const challenge = b64url(await sha256(verifier));
-      sessionStorage.setItem("tide.pkce.verifier", verifier);
-      sessionStorage.setItem("tide.pkce.state", state);
-      const p = new URLSearchParams({
+    function gisReady() {
+      return new Promise((res, rej) => {
+        const t0 = Date.now();
+        (function poll() {
+          if (window.google && google.accounts && google.accounts.oauth2) return res();
+          if (Date.now() - t0 > 10000) return rej(new Error("Google Identity Services failed to load (check your connection / CSP)."));
+          setTimeout(poll, 50);
+        })();
+      });
+    }
+
+    async function ensureClient() {
+      if (tokenClient) return tokenClient;
+      await gisReady();
+      tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
-        redirect_uri: redirectUri(),
-        response_type: "code",
         scope: OAUTH.scopes,
-        code_challenge: challenge,
-        code_challenge_method: "S256",
-        state,
-        access_type: "offline",
-        prompt: "consent",
-        include_granted_scopes: "true",
+        callback: (resp) => {
+          const p = pending; pending = null; if (!p) return;
+          if (resp && resp.access_token) p.resolve(resp);
+          else p.reject(Object.assign(new Error((resp && resp.error) || "token error"), { resp }));
+        },
+        error_callback: (err) => { const p = pending; pending = null; if (p) p.reject(err || new Error("token flow failed")); },
       });
-      location.assign(`${OAUTH.authEndpoint}?${p.toString()}`);
+      return tokenClient;
     }
 
-    // Handle the redirect back from Google. Returns true if a code was processed.
-    async function handleRedirect() {
-      const params = new URLSearchParams(location.search);
-      const code = params.get("code");
-      const state = params.get("state");
-      const error = params.get("error");
-      if (error) {
-        cleanUrl();
-        toast(`Google returned: ${error}`, "err");
-        return false;
-      }
-      if (!code) return false;
-
-      const expectState = sessionStorage.getItem("tide.pkce.state");
-      const verifier = sessionStorage.getItem("tide.pkce.verifier");
-      sessionStorage.removeItem("tide.pkce.state");
-      sessionStorage.removeItem("tide.pkce.verifier");
-      cleanUrl();
-      if (!expectState || state !== expectState || !verifier) {
-        toast("OAuth state mismatch — please try connecting again.", "err");
-        return false;
-      }
-      try {
-        await exchangeCode(code, verifier);
-        return true;
-      } catch (e) {
-        console.error(e);
-        toast("Token exchange failed. See console; if this is a CORS error the token endpoint may need the bridge.", "err");
-        return false;
-      }
-    }
-
-    function cleanUrl() {
-      const u = new URL(location.href);
-      u.search = "";
-      history.replaceState({}, document.title, u.toString());
-    }
-
-    async function exchangeCode(code, verifier) {
-      const body = new URLSearchParams({
-        client_id: GOOGLE_CLIENT_ID,
-        code,
-        code_verifier: verifier,
-        grant_type: "authorization_code",
-        redirect_uri: redirectUri(),
+    // Low-level token request. opts: { prompt: "consent"|"", hint }
+    function requestToken(opts) {
+      return new Promise((resolve, reject) => {
+        ensureClient().then(() => {
+          if (pending) return reject(new Error("another token request is in flight"));
+          pending = { resolve, reject };
+          try { tokenClient.requestAccessToken(opts || {}); }
+          catch (e) { pending = null; reject(e); }
+        }, reject);
       });
-      const r = await fetch(OAUTH.tokenEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      });
-      if (!r.ok) throw new Error("token exchange " + r.status + " " + (await r.text()));
-      const data = await r.json();
-      const claims = data.id_token ? decodeJwt(data.id_token) : {};
-      conn = {
-        email: claims.email || "(unknown account)",
-        sub: claims.sub || null,
-        refreshToken: data.refresh_token || (conn && conn.refreshToken) || null,
-        scope: data.scope || OAUTH.scopes,
-      };
-      access = { token: data.access_token, expiresAt: Date.now() + (data.expires_in - 60) * 1000 };
-      await Vault.set("connection", conn); // refresh token persisted; access token stays in memory
     }
 
-    function decodeJwt(jwt) {
-      try {
-        const p = jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-        return JSON.parse(decodeURIComponent(escape(atob(p))));
-      } catch { return {}; }
+    async function fetchUserinfo(token) {
+      const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: "Bearer " + token } });
+      if (!r.ok) throw new Error("userinfo " + r.status);
+      return r.json(); // { sub, email, picture, ... }
+    }
+
+    function persist() {
+      // identity only — tokens are ephemeral (GIS re-grants silently)
+      return Vault.set("connections", conns.map((c) => ({ id: c.id, email: c.email, picture: c.picture || null })));
+    }
+
+    function applyToken(conn, resp) {
+      conn.token = resp.access_token;
+      conn.expiresAt = Date.now() + ((+resp.expires_in || 3600) - 60) * 1000;
+      conn.needsReconnect = false;
+      return conn.token;
+    }
+
+    // Interactive: add (or re-consent) an account. MUST be called from a click.
+    async function addAccount(prompt = "consent") {
+      // First add uses "consent" (must grant scopes). Reconnect of an already-granted
+      // account passes "select_account": opens the chooser popup but skips the scope
+      // screen for scopes already granted (lighter than a full re-consent).
+      const resp = await requestToken({ prompt });
+      const info = await fetchUserinfo(resp.access_token);
+      const existing = conns.find((c) => c.id === info.sub || c.email === info.email);
+      const rec = existing || { id: info.sub, email: info.email };
+      rec.picture = info.picture || rec.picture || null;
+      rec.scope = resp.scope || OAUTH.scopes;
+      applyToken(rec, resp);
+      if (!existing) conns.push(rec);
+      await persist();
+      return rec;
+    }
+
+    // Silent renew for a specific connection (no UI). Throws on failure.
+    async function renew(conn) {
+      const resp = await requestToken({ prompt: "", hint: conn.email });
+      return applyToken(conn, resp);
+    }
+
+    async function tokenFor(conn) {
+      if (conn.token && Date.now() < conn.expiresAt) return conn.token;
+      return renew(conn);
     }
 
     async function loadStored() {
-      conn = await Vault.get("connection");
-      return !!(conn && conn.refreshToken);
+      const stored = await Vault.get("connections");
+      conns = (stored || []).map((c) => ({ id: c.id, email: c.email, picture: c.picture || null, token: null, expiresAt: 0, needsReconnect: true }));
+      return conns.length > 0;
     }
 
-    async function refresh() {
-      if (!conn || !conn.refreshToken) throw new Error("no refresh token");
-      const body = new URLSearchParams({
-        client_id: GOOGLE_CLIENT_ID,
-        refresh_token: conn.refreshToken,
-        grant_type: "refresh_token",
-      });
-      const r = await fetch(OAUTH.tokenEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      });
-      if (r.status === 400 || r.status === 401) {
-        // refresh token revoked/expired
-        access = null;
-        throw Object.assign(new Error("refresh rejected"), { reauth: true });
+    // Best-effort: silently obtain a token for every stored account.
+    async function warmup() {
+      for (const c of conns) {
+        try { await renew(c); } catch (e) { c.needsReconnect = true; console.warn("silent token failed for", c.email, e); }
       }
-      if (!r.ok) throw new Error("refresh " + r.status);
-      const data = await r.json();
-      access = { token: data.access_token, expiresAt: Date.now() + (data.expires_in - 60) * 1000 };
-      return access.token;
+      return conns.some((c) => c.token);
     }
 
-    async function token() {
-      if (access && access.token && Date.now() < access.expiresAt) return access.token;
-      return refresh();
-    }
-
-    async function disconnect() {
-      access = null; conn = null;
-      await Vault.clearAll();
-    }
+    async function removeAccount(id) { conns = conns.filter((c) => c.id !== id); await persist(); }
+    async function disconnectAll() { conns = []; await Vault.clearAll(); }
 
     return {
-      begin, handleRedirect, loadStored, token, disconnect, refresh,
-      isConnected: () => !!(conn && conn.refreshToken),
-      account: () => conn,
-      fingerprint: () => (access && access.token ? access.token.slice(-4) : "----"),
+      addAccount, renew, removeAccount, disconnectAll, loadStored, warmup, tokenFor,
+      init: () => ensureClient().catch((e) => console.warn("GIS init deferred", e)),
+      list: () => conns,
+      byId: (id) => conns.find((c) => c.id === id) || null,
+      isConnected: () => conns.length > 0,
+      account: () => (conns[0] ? { email: conns[0].email, sub: conns[0].id } : null),
       clientConfigured,
     };
   })();
@@ -757,15 +763,15 @@
   /* ====================================================================== *
    *  Google Calendar API client (shared by UI and agent face)              *
    * ====================================================================== */
-  async function gfetch(path, opts = {}, retry = true) {
-    const tok = await Auth.token();
+  async function gfetch(conn, path, opts = {}, retry = true) {
+    const tok = await Auth.tokenFor(conn);
     const r = await fetch(path.startsWith("http") ? path : GCAL + path, {
       ...opts,
       headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json", ...(opts.headers || {}) },
     });
     if (r.status === 401 && retry) {
-      await Auth.refresh();
-      return gfetch(path, opts, false);
+      await Auth.renew(conn);
+      return gfetch(conn, path, opts, false);
     }
     if (!r.ok) {
       const body = await r.text().catch(() => "");
@@ -776,8 +782,8 @@
   }
 
   const Api = {
-    async listCalendars() {
-      const data = await gfetch("/users/me/calendarList?minAccessRole=reader&maxResults=250");
+    async listCalendars(conn) {
+      const data = await gfetch(conn, "/users/me/calendarList?minAccessRole=reader&maxResults=250");
       return (data.items || []).map((c) => ({
         id: c.id,
         summary: c.summaryOverride || c.summary,
@@ -788,7 +794,7 @@
         accessRole: c.accessRole,
       }));
     },
-    async listEvents(calendarId, timeMin, timeMax) {
+    async listEvents(conn, calendarId, timeMin, timeMax) {
       const out = [];
       let pageToken = null;
       do {
@@ -801,24 +807,24 @@
           showDeleted: "false",
         });
         if (pageToken) p.set("pageToken", pageToken);
-        const data = await gfetch(`/calendars/${encodeURIComponent(calendarId)}/events?${p}`);
+        const data = await gfetch(conn, `/calendars/${encodeURIComponent(calendarId)}/events?${p}`);
         for (const e of data.items || []) out.push(e);
         pageToken = data.nextPageToken || null;
       } while (pageToken);
       return out;
     },
-    createEvent(calendarId, resource) {
-      return gfetch(`/calendars/${encodeURIComponent(calendarId)}/events`, {
+    createEvent(conn, calendarId, resource) {
+      return gfetch(conn, `/calendars/${encodeURIComponent(calendarId)}/events`, {
         method: "POST", body: JSON.stringify(resource),
       });
     },
-    updateEvent(calendarId, eventId, resource) {
-      return gfetch(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
+    updateEvent(conn, calendarId, eventId, resource) {
+      return gfetch(conn, `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
         method: "PATCH", body: JSON.stringify(resource),
       });
     },
-    deleteEvent(calendarId, eventId) {
-      return gfetch(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
+    deleteEvent(conn, calendarId, eventId) {
+      return gfetch(conn, `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
         method: "DELETE",
       });
     },
@@ -903,16 +909,29 @@
   /* ====================================================================== *
    *  Data loading                                                          *
    * ====================================================================== */
+  // Composite calendar key: a calendar is unique per (account, calendarId).
+  const calKey = (connId, calId) => connId + "::" + calId;
+
   async function ensureCalendars() {
     if (state.calendars.length) return;
-    state.calendars = await Api.listCalendars();
+    const all = [];
+    for (const conn of Auth.list()) {
+      if (conn.needsReconnect && !conn.token) continue; // silent token failed — sidebar shows "Reconnect"
+      let cals = [];
+      try { cals = await Api.listCalendars(conn); }
+      catch (e) { console.warn("calendarList failed for", conn.email, e); conn.needsReconnect = true; continue; }
+      for (const c of cals) { c._connId = conn.id; c._connEmail = conn.email; c.key = calKey(conn.id, c.id); all.push(c); }
+    }
+    state.calendars = all;
     const sel = prefs.selectedCalendars;
-    state.selected = new Set(
-      sel ? sel : state.calendars.filter((c) => c.selected).map((c) => c.id)
-    );
-    if (state.selected.size === 0 && state.calendars.length) {
-      const prim = state.calendars.find((c) => c.primary) || state.calendars[0];
-      state.selected.add(prim.id);
+    if (sel && sel.length) {
+      state.selected = new Set(sel.filter((k) => all.some((c) => c.key === k)));
+    } else {
+      state.selected = new Set(all.filter((c) => c.selected).map((c) => c.key));
+    }
+    if (state.selected.size === 0 && all.length) {
+      for (const conn of Auth.list()) { const prim = all.find((c) => c._connId === conn.id && c.primary); if (prim) state.selected.add(prim.key); }
+      if (state.selected.size === 0) state.selected.add(all[0].key);
     }
   }
 
@@ -923,20 +942,21 @@
     state.rangeFrom = from; state.rangeTo = to;
     state.loading = true; renderHeader();
     try {
-      const cals = state.calendars.filter((c) => state.selected.has(c.id));
+      const cals = state.calendars.filter((c) => state.selected.has(c.key));
       const lists = await Promise.all(
-        cals.map((c) =>
-          Api.listEvents(c.id, from, to)
-            .then((items) => items.map((e) => ({ ...e, _calId: c.id, _color: c.color })))
-            .catch((err) => { console.warn("calendar load failed", c.id, err); return []; })
-        )
+        cals.map((c) => {
+          const conn = Auth.byId(c._connId);
+          if (!conn) return Promise.resolve([]);
+          return Api.listEvents(conn, c.id, from, to)
+            .then((items) => items.map((e) => ({ ...e, _calId: c.id, _connId: c._connId, _calKey: c.key, _color: c.color })))
+            .catch((err) => { console.warn("calendar load failed", c.key, err); return []; });
+        })
       );
       state.events = lists.flat();
       await Vault.set("eventCache", { from: from.toISOString(), to: to.toISOString(), events: state.events });
       state.offline = false;
       $("#offlineBanner").classList.add("hidden");
     } catch (err) {
-      if (err.reauth) { renderConnect(true); return; }
       console.error(err);
       // fall back to cache
       const cache = await Vault.get("eventCache");
@@ -945,6 +965,7 @@
     } finally {
       state.loading = false;
       render();
+      renderSidebar();
       scheduleNudges();
     }
   }
@@ -965,9 +986,11 @@
     }
     const lab = $("#periodLabel");
     lab.replaceChildren(
-      h("span", { text: label }),
-      h("span", { class: "period-sub", text: String(first.getFullYear()) }),
-      state.loading ? h("span", { class: "period-sub", text: "· loading…" }) : null,
+      ...[
+        h("span", { text: label }),
+        h("span", { class: "period-sub", text: String(first.getFullYear()) }),
+        state.loading ? h("span", { class: "period-sub", text: "· loading…" }) : null,
+      ].filter(Boolean),
     );
     $("#weekViewBtn").setAttribute("aria-pressed", state.view === "week");
     $("#dayViewBtn").setAttribute("aria-pressed", state.view === "day");
@@ -1056,11 +1079,16 @@
       grid.append(col);
     });
 
-    // scroll to working hours start on first paint of a view
+    // On first paint of a view, scroll so the CURRENT time sits vertically centered.
     const body = $("#calBody");
     if (!body.dataset.scrolled) {
-      body.scrollTop = Math.max(0, (prefs.workingHours.start - 0.5) * HOUR_H);
       body.dataset.scrolled = "1";
+      requestAnimationFrame(() => {           // wait for layout so clientHeight is real
+        const now = new Date();
+        const nowY = ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_H;
+        const target = nowY - body.clientHeight / 2;
+        body.scrollTop = Math.max(0, Math.min(target, body.scrollHeight - body.clientHeight));
+      });
     }
   }
 
@@ -1203,9 +1231,10 @@
   function openEventEditor(seed = {}, existing = null) {
     const start = seed.start || new Date();
     const end = seed.end || new Date(start.getTime() + 3600000);
+    const multiAcct = Auth.list().length > 1;
     const writableCals = state.calendars.filter((c) => c.accessRole === "owner" || c.accessRole === "writer");
-    const defaultCal = existing ? existing._calId
-      : (state.calendars.find((c) => c.primary)?.id || writableCals[0]?.id || "primary");
+    const defaultCal = existing ? existing._calKey
+      : (state.calendars.find((c) => c.primary)?.key || writableCals[0]?.key || (state.calendars[0] && state.calendars[0].key));
 
     const titleIn = h("input", { type: "text", value: seed.title || (existing && existing.summary) || "", placeholder: "Add title", "aria-label": "Event title" });
     const startIn = h("input", { type: "datetime-local", value: toLocalInput(start), "aria-label": "Start" });
@@ -1214,7 +1243,10 @@
     if (existing && isAllDay(existing)) allDayChk.checked = true;
     const calSel = h("select", { "aria-label": "Calendar" },
       ...(writableCals.length ? writableCals : state.calendars).map((c) =>
-        h("option", { value: c.id, selected: c.id === defaultCal }, c.summary + (c.accessRole && c.accessRole !== "owner" && c.accessRole !== "writer" ? " (read-only)" : "")))
+        h("option", { value: c.key, selected: c.key === defaultCal },
+          c.summary
+          + (multiAcct ? "  ·  " + c._connEmail : "")
+          + (c.accessRole && c.accessRole !== "owner" && c.accessRole !== "writer" ? " (read-only)" : "")))
     );
     const descIn = h("textarea", { placeholder: "Description (optional)", "aria-label": "Description" }, existing?.description || "");
     const remIn = h("input", { type: "number", min: "0", max: "40320", value: String(prefs.reminderMinutes), "aria-label": "Reminder minutes" });
@@ -1243,7 +1275,7 @@
       const delBtn = h("button", { class: "btn danger", html: ICON.trash + " Delete" });
       delBtn.addEventListener("click", async () => {
         if (!confirmWrite()) return;
-        try { await Api.deleteEvent(existing._calId, existing.id); toast("Event deleted"); closeModal(); await loadEvents(); }
+        try { await Api.deleteEvent(Auth.byId(existing._connId), existing._calId, existing.id); toast("Event deleted"); closeModal(); await loadEvents(); }
         catch (e) { toast("Delete failed: " + (e.status || e.message), "err"); }
       });
       foot.push(delBtn, h("div", { style: { flex: "1" } }));
@@ -1259,11 +1291,11 @@
       const allDay = allDayChk.checked;
       const s = fromLocalInput(startIn.value), e = fromLocalInput(endIn.value);
       const resource = buildEventResource({ title, start: s, end: e, allDay, description: descIn.value.trim(), reminderMin: remIn.value });
-      const calId = calSel.value;
+      const [selConnId, selCalId] = calSel.value.split("::");
       saveBtn.disabled = true; saveBtn.textContent = "Saving…";
       try {
-        if (existing && existing.id) await Api.updateEvent(existing._calId, existing.id, resource);
-        else await Api.createEvent(calId, resource);
+        if (existing && existing.id) await Api.updateEvent(Auth.byId(existing._connId), existing._calId, existing.id, resource);
+        else await Api.createEvent(Auth.byId(selConnId), selCalId, resource);
         toast(existing ? "Event updated" : "Event created");
         closeModal();
         await loadEvents();
@@ -1304,7 +1336,7 @@
    *  Event detail                                                          *
    * ====================================================================== */
   function openEventDetail(e) {
-    const cal = state.calendars.find((c) => c.id === e._calId);
+    const cal = state.calendars.find((c) => c.key === e._calKey) || state.calendars.find((c) => c.id === e._calId);
     const when = isAllDay(e)
       ? eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }) + " · all day"
       : `${eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${fmtTime(eventStart(e))} – ${fmtTime(eventEnd(e))}`;
@@ -1396,14 +1428,16 @@
     async function commit() {
       if (!parsed) return;
       if (!confirmWrite()) return;
-      const cal = parsed.calendarId || state.calendars.find((c) => c.primary)?.id || state.calendars[0]?.id;
+      const cal = (parsed.calendarId && state.calendars.find((c) => c.id === parsed.calendarId))
+        || state.calendars.find((c) => c.primary) || state.calendars[0];
+      if (!cal) { toast("No calendar available", "err"); return; }
       const resource = buildEventResource({
         title: parsed.title, start: parsed.start, end: parsed.end,
         allDay: parsed.allDay, description: "", reminderMin: String(prefs.reminderMinutes),
       });
       confirmBtn.disabled = true; confirmBtn.textContent = "Creating…";
       try {
-        await Api.createEvent(cal, resource);
+        await Api.createEvent(Auth.byId(cal._connId), cal.id, resource);
         toast(`Created “${parsed.title}”`);
         closeModal();
         await loadEvents();
@@ -1652,13 +1686,14 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
   window.tide = {
     get connected() { return Auth.isConnected(); },
     account: () => (Auth.account() ? { email: Auth.account().email, sub: Auth.account().sub } : null),
+    accounts: () => Auth.list().map((c) => ({ email: c.email, sub: c.id })),
     agent: {
       async listEvents({ from, to, calendarIds } = {}) {
         await ensureCalendars();
         const f = from ? new Date(from) : startOfDay(new Date());
         const t = to ? new Date(to) : addDays(f, 7);
-        const cals = (calendarIds && calendarIds.length ? state.calendars.filter((c) => calendarIds.includes(c.id)) : state.calendars.filter((c) => state.selected.has(c.id)));
-        const lists = await Promise.all(cals.map((c) => Api.listEvents(c.id, f, t).then((items) => items.map((e) => normalizeEvent(e, c)))));
+        const cals = (calendarIds && calendarIds.length ? state.calendars.filter((c) => calendarIds.includes(c.id)) : state.calendars.filter((c) => state.selected.has(c.key)));
+        const lists = await Promise.all(cals.map((c) => Api.listEvents(Auth.byId(c._connId), c.id, f, t).then((items) => items.map((e) => normalizeEvent(e, c)))));
         return lists.flat().sort((a, b) => new Date(a.start) - new Date(b.start));
       },
       async createEvent({ title, start, end, calendarId, description } = {}) {
@@ -1666,18 +1701,19 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
         if (!title) throw new Error("title required");
         const s = new Date(start);
         const e = end ? new Date(end) : new Date(s.getTime() + 3600000);
-        const cal = calendarId || state.calendars.find((c) => c.primary)?.id || state.calendars[0]?.id;
+        const cal = (calendarId && state.calendars.find((c) => c.id === calendarId)) || state.calendars.find((c) => c.primary) || state.calendars[0];
+        if (!cal) throw new Error("no calendar available");
         const resource = buildEventResource({ title, start: s, end: e, allDay: false, description: description || "", reminderMin: String(prefs.reminderMinutes) });
-        const created = await Api.createEvent(cal, resource);
-        return normalizeEvent(created, state.calendars.find((c) => c.id === cal));
+        const created = await Api.createEvent(Auth.byId(cal._connId), cal.id, resource);
+        return normalizeEvent(created, cal);
       },
       async findSlots({ durationMin = 30, window: win, workingHours, calendarIds } = {}) {
         await ensureCalendars();
         const from = win ? new Date(win.from) : startOfDay(new Date());
         const to = win ? new Date(win.to) : addDays(from, 7);
         const wh = workingHours || prefs.workingHours;
-        const cals = (calendarIds && calendarIds.length ? state.calendars.filter((c) => calendarIds.includes(c.id)) : state.calendars.filter((c) => state.selected.has(c.id)));
-        const lists = await Promise.all(cals.map((c) => Api.listEvents(c.id, from, to)));
+        const cals = (calendarIds && calendarIds.length ? state.calendars.filter((c) => calendarIds.includes(c.id)) : state.calendars.filter((c) => state.selected.has(c.key)));
+        const lists = await Promise.all(cals.map((c) => Api.listEvents(Auth.byId(c._connId), c.id, from, to)));
         const busy = lists.flat().filter((e) => !isAllDay(e)).map((e) => [eventStart(e).getTime(), eventEnd(e).getTime()]).sort((a, b) => a[0] - b[0]);
         const slots = [];
         const durMs = durationMin * 60000;
@@ -1736,19 +1772,27 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
    *  Account / settings modal                                              *
    * ====================================================================== */
   function openSettings() {
-    const acct = Auth.account();
     const body = h("div", {});
 
-    // Connection
-    body.append(
-      h("div", { class: "help-section" },
-        h("h3", { text: "Connection" }),
-        h("dl", { class: "kv" },
-          h("dt", { text: "Account" }), h("dd", { text: acct ? acct.email : "—" }),
-          h("dt", { text: "Access token" }), h("dd", { class: "small muted", text: "•••• " + Auth.fingerprint() + " (in memory; refresh token in IndexedDB)" }),
-        ),
-      ),
-    );
+    // Accounts
+    const acctList = h("div", { class: "acctlist" });
+    for (const conn of Auth.list()) {
+      const rm = h("button", { class: "btn ghost small", text: "Remove" });
+      rm.addEventListener("click", async () => {
+        await Auth.removeAccount(conn.id);
+        state.calendars = state.calendars.filter((c) => c._connId !== conn.id);
+        for (const k of [...state.selected]) if (k.startsWith(conn.id + "::")) state.selected.delete(k);
+        prefs.selectedCalendars = [...state.selected]; await savePrefs();
+        if (Auth.list().length === 0) { location.reload(); return; }
+        closeModal(); updateAcctChip(); renderSidebar(); await loadEvents();
+      });
+      acctList.append(h("div", { class: "acctrow" },
+        h("span", { class: "acctrow-email", text: conn.email + (conn.needsReconnect && !conn.token ? "  ·  needs reconnect" : "") }),
+        rm));
+    }
+    const addBtn = h("button", { class: "btn", text: "+ Add account" });
+    addBtn.addEventListener("click", async () => { closeModal(); await addAccountFlow(); });
+    body.append(h("div", { class: "help-section" }, h("h3", { text: "Accounts" }), acctList, addBtn));
 
     // View prefs
     const viewSel = h("select", {}, h("option", { value: "week", selected: prefs.defaultView === "week" }, "Week"), h("option", { value: "day", selected: prefs.defaultView === "day" }, "Day"));
@@ -1770,14 +1814,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
       h("label", { class: "chk" }, nudgeChk, h("span", { text: "In-tab nudges while a Tide tab is open (best-effort)" })),
     ));
 
-    // Calendars
-    const calWrap = h("div", { class: "callist" });
-    for (const c of state.calendars) {
-      const cb = h("input", { type: "checkbox" }); cb.checked = state.selected.has(c.id);
-      cb.addEventListener("change", () => { if (cb.checked) state.selected.add(c.id); else state.selected.delete(c.id); });
-      calWrap.append(h("label", { class: "calrow" }, cb, h("span", { class: "calswatch", style: { background: c.color } }), h("span", { class: "calname", text: c.summary + (c.primary ? "  ·  primary" : "") })));
-    }
-    body.append(h("div", { class: "help-section" }, h("h3", { text: "Calendars" }), calWrap));
+    // (Calendar visibility is controlled from the left sidebar, grouped per account.)
 
     // BYOK
     const byokDetails = h("details", {},
@@ -1798,7 +1835,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     // Danger zone
     const disconnectBtn = h("button", { class: "btn danger", text: "Disconnect & erase all local data" });
     disconnectBtn.addEventListener("click", async () => {
-      await Auth.disconnect();
+      await Auth.disconnectAll();
       closeModal();
       location.reload();
     });
@@ -1850,7 +1887,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
         )),
       h("div", { class: "help-section" },
         h("h3", { text: "Sovereignty" }),
-        h("p", { class: "small muted", text: "Tide is one static HTML file. It talks straight to Google with PKCE OAuth; your tokens live only in this browser's IndexedDB and never touch a server. No accounts, no telemetry. Disconnect erases everything locally." })),
+        h("p", { class: "small muted", text: "Tide is one static HTML file. It talks straight to Google via Google Identity Services — no client secret, no backend. Access tokens live only in memory in this tab; only which accounts you've connected is saved in this browser. No telemetry. Disconnect erases everything local." })),
       h("div", { class: "help-section" },
         h("h3", { text: "Composition, not welding" }),
         h("p", { class: "small muted", text: "Tide shows your week and captures events — that's the whole job. It deliberately does not transcribe or take notes. When you want meeting capture, Tide emits the event and Steno records it: two small tools over shared primitives, not one bloated app." })),
@@ -1880,8 +1917,75 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
    *  Account chip                                                          *
    * ====================================================================== */
   function updateAcctChip() {
-    const acct = Auth.account();
-    $("#acctLabel").textContent = acct ? acct.email : "Not connected";
+    const list = Auth.list();
+    $("#acctLabel").textContent = list.length === 0 ? "Not connected"
+      : list.length === 1 ? list[0].email
+      : list[0].email + "  +" + (list.length - 1);
+  }
+
+  /* ====================================================================== *
+   *  Sidebar — accounts, each expandable to its calendars (Notion-style)   *
+   * ====================================================================== */
+  function renderSidebar() {
+    const el = $("#sidebar");
+    if (!el) return;
+    el.replaceChildren();
+    for (const conn of Auth.list()) {
+      const cals = state.calendars.filter((c) => c._connId === conn.id);
+      const head = h("div", { class: "sb-acct" },
+        h("span", { class: "sb-acct-email", title: conn.email, text: conn.email }));
+      if (conn.needsReconnect && !conn.token) {
+        const rc = h("button", { class: "sb-btn", text: "Reconnect" });
+        rc.addEventListener("click", async () => {
+          try { await Auth.addAccount("select_account"); state.calendars = []; await ensureCalendars(); await loadEvents(); updateAcctChip(); }
+          catch (e) { toast("Reconnect failed: " + (e && e.message || "cancelled"), "err"); }
+        });
+        head.append(rc);
+      } else {
+        const rm = h("button", { class: "sb-x iconbtn", title: "Remove account", "aria-label": "Remove " + conn.email, html: ICON.close });
+        rm.addEventListener("click", async () => {
+          await Auth.removeAccount(conn.id);
+          state.calendars = state.calendars.filter((c) => c._connId !== conn.id);
+          for (const k of [...state.selected]) if (k.startsWith(conn.id + "::")) state.selected.delete(k);
+          prefs.selectedCalendars = [...state.selected]; await savePrefs();
+          state.events = state.events.filter((e) => e._connId !== conn.id);
+          if (Auth.list().length === 0) { location.reload(); return; }
+          updateAcctChip(); render(); renderSidebar();
+        });
+        head.append(rm);
+      }
+      el.append(head);
+      const list = h("div", { class: "sb-cals" });
+      for (const c of cals) {
+        const cb = h("input", { type: "checkbox" }); cb.checked = state.selected.has(c.key);
+        cb.addEventListener("change", async () => {
+          if (cb.checked) state.selected.add(c.key); else state.selected.delete(c.key);
+          prefs.selectedCalendars = [...state.selected]; await savePrefs();
+          await loadEvents();
+        });
+        list.append(h("label", { class: "sb-cal" }, cb,
+          h("span", { class: "sb-dot", style: { background: c.color } }),
+          h("span", { class: "sb-calname", text: c.summary + (c.primary ? " · primary" : "") })));
+      }
+      el.append(list);
+    }
+    const add = h("button", { class: "sb-add", text: "+ Add account" });
+    add.addEventListener("click", () => addAccountFlow());
+    el.append(add);
+  }
+
+  async function addAccountFlow() {
+    try {
+      await Auth.addAccount();
+      state.calendars = [];              // rebuild the merged list across all accounts
+      await ensureCalendars();
+      await loadEvents();
+      updateAcctChip();
+      toast("Account connected");
+    } catch (e) {
+      console.error(e);
+      toast("Couldn't add account: " + (e && (e.message || e.type) || "cancelled"), "err");
+    }
   }
 
   /* ====================================================================== *
@@ -1897,7 +2001,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     if (activeModal || isTyping(document.activeElement) || e.metaKey || e.ctrlKey || e.altKey) return;
     if (!Auth.isConnected()) return;
     switch (e.key) {
-      case "t": case "T": state.anchor = startOfDay(new Date()); loadEvents(); break;
+      case "t": case "T": state.anchor = startOfDay(new Date()); $("#calBody").dataset.scrolled = ""; loadEvents(); break;
       case "w": case "W": setView("week"); break;
       case "d": case "D": setView("day"); break;
       case "n": case "N": openEventEditor(); break;
@@ -1926,14 +2030,17 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
    * ====================================================================== */
   $("#weekViewBtn").addEventListener("click", () => setView("week"));
   $("#dayViewBtn").addEventListener("click", () => setView("day"));
-  $("#todayBtn").addEventListener("click", () => { state.anchor = startOfDay(new Date()); loadEvents(); });
+  $("#todayBtn").addEventListener("click", () => { state.anchor = startOfDay(new Date()); $("#calBody").dataset.scrolled = ""; loadEvents(); });
   $("#prevBtn").addEventListener("click", () => stepPeriod(-1));
   $("#nextBtn").addEventListener("click", () => stepPeriod(1));
   $("#newEventBtn").addEventListener("click", () => openEventEditor());
   $("#cmdOpenBtn").addEventListener("click", () => openCommandBar());
   $("#helpBtn").addEventListener("click", () => openHelp());
   $("#acctBtn").addEventListener("click", () => openSettings());
-  $("#connectBtn").addEventListener("click", () => Auth.begin());
+  $("#connectBtn").addEventListener("click", async () => {
+    await addAccountFlow();
+    if (Auth.isConnected()) await showApp();
+  });
 
   window.addEventListener("online", () => { state.offline = false; $("#offlineBanner").classList.add("hidden"); if (Auth.isConnected()) loadEvents(); });
   window.addEventListener("offline", () => { state.offline = true; $("#offlineBanner").classList.remove("hidden"); });
@@ -1961,16 +2068,15 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
 
   async function boot() {
     await loadPrefs();
-    // 1) returning from Google?
-    const came = await Auth.handleRedirect();
-    if (came) { await showApp(); return; }
-    // 2) stored connection?
+    Auth.init(); // warm the GIS token client so requestAccessToken fires within the click
+    // Stored accounts? Silently re-grant tokens (GIS keeps no refresh token).
     const has = await Auth.loadStored();
     if (has) {
-      try { await Auth.token(); await showApp(); return; }
-      catch (e) { console.warn("silent refresh failed", e); renderConnect(true); return; }
+      const anyLive = await Auth.warmup(); // best-effort; accounts that fail show "Reconnect" in the sidebar
+      await showApp();
+      if (!anyLive) toast("Reconnect your account to load your calendar.", "err");
+      return;
     }
-    // 3) fresh
     renderConnect(false);
   }
 
