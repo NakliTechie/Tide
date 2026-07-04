@@ -22,7 +22,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-FRW2efGODxY8r57Edu9xopgyMcRxncMSvIAOEcQBCJE=' https://accounts.google.com https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-PEz15Bk4EWX/4FGP3R3dRSkLn98o6RbmbgJXBozYHY8=' https://accounts.google.com https://cdn.jsdelivr.net;
     frame-src https://accounts.google.com https://*.google.com;
     connect-src 'self'
       https://accounts.google.com
@@ -530,7 +530,7 @@
   const GOOGLE_CLIENT_ID =
     new URLSearchParams(location.search).get("client_id") ||
     localStorage.getItem("tide.clientId") ||
-    "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
+    "604859367732-t8rgb4idco9mgd96eqs88u446v1tla00.apps.googleusercontent.com";
 
   const OAUTH = {
     authEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
