@@ -4,10 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Tide</title>
-  <meta name="description" content="A single-file, keyboard-first calendar over your Google Calendar. No server, no account, no telemetry. Your token never leaves your browser." />
+  <meta name="description" content="A keyboard-first calendar over your Google Calendar, with multi-account support. No account to create, no telemetry. Your calendar data never leaves your browser." />
   <meta name="color-scheme" content="light dark" />
-  <!-- Google Identity Services (token client). Public client, no secret, no server. -->
-  <script src="https://accounts.google.com/gsi/client" async></script>
   <!--
     Content-Security-Policy.
     script-src uses 'self' for the (future) external module and the pinned
@@ -22,11 +20,8 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-PEz15Bk4EWX/4FGP3R3dRSkLn98o6RbmbgJXBozYHY8=' https://accounts.google.com https://cdn.jsdelivr.net;
-    frame-src https://accounts.google.com https://*.google.com;
+    script-src 'self' 'sha256-rccFCRR1p+yNdOoukaz+VSKHF2cB4BQQA+g9mkbJ/Nk=' https://cdn.jsdelivr.net;
     connect-src 'self'
-      https://accounts.google.com
-      https://oauth2.googleapis.com
       https://www.googleapis.com
       https://*.googleapis.com
       https://api.anthropic.com
@@ -507,7 +502,7 @@
       <p>Your Google Calendar, rendered fast and keyboard-first. Nothing in between — your token stays in this browser and never touches a server.</p>
       <div id="configWarn" class="warn hidden"></div>
       <button class="btn primary" id="connectBtn" style="font-size:15px;padding:10px 18px">Connect Google Calendar</button>
-      <p class="fine">Google sign-in straight from your browser — no client secret, no server, no telemetry. Access tokens stay in this tab; only which accounts you connect is saved locally. Add more accounts anytime.</p>
+      <p class="fine">Sign in with Google. A tiny token-exchange endpoint keeps Google's secret off your browser; your calendar data never touches it. Tokens are stored only in this browser. Connect as many accounts as you like.</p>
     </div>
   </div>
 
@@ -645,98 +640,139 @@
   })();
 
   /* ====================================================================== *
-   *  Auth — Google Identity Services (GIS) token client.                    *
-   *  Public client, no secret, no server. Multiple Google accounts are held *
-   *  in a connections registry; each account's access token lives only in   *
-   *  memory and is silently re-granted by GIS while its Google session is   *
-   *  alive. Only account identity (id/email) is persisted, never a token.   *
+   *  Auth — Authorization Code + PKCE, with the token exchange/refresh       *
+   *  proxied through this app's own Worker (/api/token, /api/refresh) so the *
+   *  Google client secret stays server-side. Multiple accounts are held in a *
+   *  connections registry; each account's refresh token lives in IndexedDB   *
+   *  and access tokens are re-minted silently on load — no reconnect churn.  *
    * ====================================================================== */
+  function b64url(buf) {
+    return btoa(String.fromCharCode(...new Uint8Array(buf)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function randString(len = 64) {
+    const a = new Uint8Array(len); crypto.getRandomValues(a);
+    return b64url(a).slice(0, len);
+  }
+  function sha256(str) { return crypto.subtle.digest("SHA-256", new TextEncoder().encode(str)); }
+
   const Auth = (() => {
-    // conns: [{ id(sub), email, picture, token, expiresAt, needsReconnect }]
+    // conns: [{ id(sub), email, picture, refreshToken, token, expiresAt, needsReconnect }]
     let conns = [];
-    let tokenClient = null;
-    let pending = null; // { resolve, reject } for the in-flight requestAccessToken
 
     function clientConfigured() { return GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith("YOUR_"); }
+    function redirectUri() { return location.origin + location.pathname; } // registered origin/path
 
-    function gisReady() {
-      return new Promise((res, rej) => {
-        const t0 = Date.now();
-        (function poll() {
-          if (window.google && google.accounts && google.accounts.oauth2) return res();
-          if (Date.now() - t0 > 10000) return rej(new Error("Google Identity Services failed to load (check your connection / CSP)."));
-          setTimeout(poll, 50);
-        })();
-      });
-    }
-
-    async function ensureClient() {
-      if (tokenClient) return tokenClient;
-      await gisReady();
-      tokenClient = google.accounts.oauth2.initTokenClient({
+    // Start (or re-)authorising an account. Full-page redirect to Google; the
+    // returning ?code is handled by handleRedirect() on the next load.
+    async function begin() {
+      if (!clientConfigured()) { showConfigWarning(); return; }
+      const verifier = randString(64), state = randString(24);
+      const challenge = b64url(await sha256(verifier));
+      sessionStorage.setItem("tide.pkce.verifier", verifier);
+      sessionStorage.setItem("tide.pkce.state", state);
+      const p = new URLSearchParams({
         client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: redirectUri(),
+        response_type: "code",
         scope: OAUTH.scopes,
-        callback: (resp) => {
-          const p = pending; pending = null; if (!p) return;
-          if (resp && resp.access_token) p.resolve(resp);
-          else p.reject(Object.assign(new Error((resp && resp.error) || "token error"), { resp }));
-        },
-        error_callback: (err) => { const p = pending; pending = null; if (p) p.reject(err || new Error("token flow failed")); },
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        state,
+        access_type: "offline",             // ask for a refresh token
+        prompt: "consent select_account",   // force refresh token + let user pick the account
+        include_granted_scopes: "true",
       });
-      return tokenClient;
+      location.assign("https://accounts.google.com/o/oauth2/v2/auth?" + p.toString());
     }
 
-    // Low-level token request. opts: { prompt: "consent"|"", hint }
-    function requestToken(opts) {
-      return new Promise((resolve, reject) => {
-        ensureClient().then(() => {
-          if (pending) return reject(new Error("another token request is in flight"));
-          pending = { resolve, reject };
-          try { tokenClient.requestAccessToken(opts || {}); }
-          catch (e) { pending = null; reject(e); }
-        }, reject);
+    function cleanUrl() {
+      const u = new URL(location.href); u.search = "";
+      history.replaceState({}, document.title, u.toString());
+    }
+
+    // Handle the redirect back from Google. Returns true if a code was processed.
+    async function handleRedirect() {
+      const params = new URLSearchParams(location.search);
+      const code = params.get("code"), state = params.get("state"), error = params.get("error");
+      if (error) { cleanUrl(); toast("Google returned: " + error, "err"); return false; }
+      if (!code) return false;
+      const expect = sessionStorage.getItem("tide.pkce.state");
+      const verifier = sessionStorage.getItem("tide.pkce.verifier");
+      sessionStorage.removeItem("tide.pkce.state"); sessionStorage.removeItem("tide.pkce.verifier");
+      cleanUrl();
+      if (!expect || state !== expect || !verifier) { toast("OAuth state mismatch — please connect again.", "err"); return false; }
+      try { await exchangeCode(code, verifier); return true; }
+      catch (e) { console.error(e); toast("Sign-in failed — see console.", "err"); return false; }
+    }
+
+    function decodeJwt(jwt) {
+      try { const p = jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+        return JSON.parse(decodeURIComponent(escape(atob(p)))); } catch { return {}; }
+    }
+
+    async function exchangeCode(code, verifier) {
+      const r = await fetch("/api/token", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, code_verifier: verifier, redirect_uri: redirectUri() }),
       });
+      if (!r.ok) throw new Error("token exchange " + r.status + " " + (await r.text()));
+      const data = await r.json();
+      const claims = data.id_token ? decodeJwt(data.id_token) : {};
+      const id = claims.sub || claims.email || ("acct-" + (conns.length + 1));
+      let conn = conns.find((c) => c.id === id || (claims.email && c.email === claims.email));
+      if (!conn) { conn = { id, email: claims.email || "(unknown account)", picture: claims.picture || null }; conns.push(conn); }
+      conn.email = claims.email || conn.email;
+      if (claims.picture) conn.picture = claims.picture;
+      if (data.refresh_token) conn.refreshToken = data.refresh_token; // keep prior one if omitted
+      applyAccess(conn, data);
+      await persist();
+      return conn;
     }
 
-    async function fetchUserinfo(token) {
-      const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: "Bearer " + token } });
-      if (!r.ok) throw new Error("userinfo " + r.status);
-      return r.json(); // { sub, email, picture, ... }
-    }
-
-    function persist() {
-      // identity only — tokens are ephemeral (GIS re-grants silently)
-      return Vault.set("connections", conns.map((c) => ({ id: c.id, email: c.email, picture: c.picture || null })));
-    }
-
-    function applyToken(conn, resp) {
-      conn.token = resp.access_token;
-      conn.expiresAt = Date.now() + ((+resp.expires_in || 3600) - 60) * 1000;
+    function applyAccess(conn, data) {
+      conn.token = data.access_token;
+      conn.expiresAt = Date.now() + ((+data.expires_in || 3600) - 60) * 1000;
       conn.needsReconnect = false;
       return conn.token;
     }
 
-    // Interactive: add (or re-consent) an account. MUST be called from a click.
-    async function addAccount(prompt = "consent") {
-      // First add uses "consent" (must grant scopes). Reconnect of an already-granted
-      // account passes "select_account": opens the chooser popup but skips the scope
-      // screen for scopes already granted (lighter than a full re-consent).
-      const resp = await requestToken({ prompt });
-      const info = await fetchUserinfo(resp.access_token);
-      const existing = conns.find((c) => c.id === info.sub || c.email === info.email);
-      const rec = existing || { id: info.sub, email: info.email };
-      rec.picture = info.picture || rec.picture || null;
-      rec.scope = resp.scope || OAUTH.scopes;
-      applyToken(rec, resp);
-      if (!existing) conns.push(rec);
-      await persist();
-      return rec;
+    function persist() {
+      // refresh token + identity persist; access tokens are ephemeral
+      return Vault.set("connections", conns.map((c) => ({
+        id: c.id, email: c.email, picture: c.picture || null, refreshToken: c.refreshToken || null,
+      })));
     }
 
-    // Silent renew for a specific connection (no UI). Throws on failure.
+    async function loadStored() {
+      const stored = await Vault.get("connections");
+      conns = (stored || []).map((c) => ({
+        id: c.id, email: c.email, picture: c.picture || null,
+        refreshToken: c.refreshToken || null, token: null, expiresAt: 0,
+        needsReconnect: !c.refreshToken,
+      }));
+      return conns.length > 0;
+    }
+
+    // Silently mint a fresh access token via the Worker. Throws {reauth:true} if
+    // the refresh token is missing/revoked (then the sidebar shows "Reconnect").
     async function renew(conn) {
-      const resp = await requestToken({ prompt: "", hint: conn.email });
-      return applyToken(conn, resp);
+      if (!conn.refreshToken) { conn.needsReconnect = true; throw Object.assign(new Error("no refresh token"), { reauth: true }); }
+      const r = await fetch("/api/refresh", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: conn.refreshToken }),
+      });
+      if (r.status === 400 || r.status === 401) { conn.needsReconnect = true; throw Object.assign(new Error("refresh rejected"), { reauth: true }); }
+      if (!r.ok) throw new Error("refresh " + r.status);
+      return applyAccess(conn, await r.json());
+    }
+
+    async function warmup() {
+      for (const c of conns) {
+        if (c.token && Date.now() < c.expiresAt) continue; // already fresh (e.g. just exchanged)
+        try { await renew(c); } catch (e) { c.needsReconnect = true; console.warn("refresh failed for", c.email, e); }
+      }
+      return conns.some((c) => c.token);
     }
 
     async function tokenFor(conn) {
@@ -744,26 +780,11 @@
       return renew(conn);
     }
 
-    async function loadStored() {
-      const stored = await Vault.get("connections");
-      conns = (stored || []).map((c) => ({ id: c.id, email: c.email, picture: c.picture || null, token: null, expiresAt: 0, needsReconnect: true }));
-      return conns.length > 0;
-    }
-
-    // Best-effort: silently obtain a token for every stored account.
-    async function warmup() {
-      for (const c of conns) {
-        try { await renew(c); } catch (e) { c.needsReconnect = true; console.warn("silent token failed for", c.email, e); }
-      }
-      return conns.some((c) => c.token);
-    }
-
     async function removeAccount(id) { conns = conns.filter((c) => c.id !== id); await persist(); }
     async function disconnectAll() { conns = []; await Vault.clearAll(); }
 
     return {
-      addAccount, renew, removeAccount, disconnectAll, loadStored, warmup, tokenFor,
-      init: () => ensureClient().catch((e) => console.warn("GIS init deferred", e)),
+      begin, handleRedirect, renew, tokenFor, warmup, loadStored, removeAccount, disconnectAll,
       list: () => conns,
       byId: (id) => conns.find((c) => c.id === id) || null,
       isConnected: () => conns.length > 0,
@@ -1942,7 +1963,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
         )),
       h("div", { class: "help-section" },
         h("h3", { text: "Sovereignty" }),
-        h("p", { class: "small muted", text: "Tide is one static HTML file. It talks straight to Google via Google Identity Services — no client secret, no backend. Access tokens live only in memory in this tab; only which accounts you've connected is saved in this browser. No telemetry. Disconnect erases everything local." })),
+        h("p", { class: "small muted", text: "Tide is a single HTML page plus a tiny Cloudflare Worker that does only the OAuth token exchange (so Google's client secret stays server-side, never in your browser). Your calendar data never touches the Worker — the browser talks straight to the Calendar API. Tokens live only in this browser; disconnect erases everything local. No telemetry." })),
       h("div", { class: "help-section" },
         h("h3", { text: "Composition, not welding" }),
         h("p", { class: "small muted", text: "Tide shows your week and captures events — that's the whole job. It deliberately does not transcribe or take notes. When you want meeting capture, Tide emits the event and Steno records it: two small tools over shared primitives, not one bloated app." })),
@@ -1991,10 +2012,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
         h("span", { class: "sb-acct-email", title: conn.email, text: conn.email }));
       if (conn.needsReconnect && !conn.token) {
         const rc = h("button", { class: "sb-btn", text: "Reconnect" });
-        rc.addEventListener("click", async () => {
-          try { await Auth.addAccount("select_account"); state.calendars = []; await ensureCalendars(); await loadEvents(); updateAcctChip(); }
-          catch (e) { toast("Reconnect failed: " + (e && e.message || "cancelled"), "err"); }
-        });
+        rc.addEventListener("click", () => Auth.begin()); // full-page redirect; boot() finishes it
         head.append(rc);
       } else {
         const rm = h("button", { class: "sb-x iconbtn", title: "Remove account", "aria-label": "Remove " + conn.email, html: ICON.close });
@@ -2030,19 +2048,9 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     el.append(add);
   }
 
-  async function addAccountFlow() {
-    try {
-      await Auth.addAccount();
-      state.calendars = [];              // rebuild the merged list across all accounts
-      await ensureCalendars();
-      await loadEvents();
-      updateAcctChip();
-      toast("Account connected");
-    } catch (e) {
-      console.error(e);
-      toast("Couldn't add account: " + (e && (e.message || e.type) || "cancelled"), "err");
-    }
-  }
+  // Adding/connecting an account is a full-page redirect to Google; the returning
+  // ?code is exchanged by boot()'s handleRedirect(). (begin() navigates away.)
+  function addAccountFlow() { return Auth.begin(); }
 
   /* ---- Per-calendar colour picker (palette swatches + custom) ------------ */
   let _colorPop = null;
@@ -2123,10 +2131,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
   $("#cmdOpenBtn").addEventListener("click", () => openCommandBar());
   $("#helpBtn").addEventListener("click", () => openHelp());
   $("#acctBtn").addEventListener("click", () => openSettings());
-  $("#connectBtn").addEventListener("click", async () => {
-    await addAccountFlow();
-    if (Auth.isConnected()) await showApp();
-  });
+  $("#connectBtn").addEventListener("click", () => Auth.begin());
 
   window.addEventListener("online", () => { state.offline = false; $("#offlineBanner").classList.add("hidden"); if (Auth.isConnected()) loadEvents(); });
   window.addEventListener("offline", () => { state.offline = true; $("#offlineBanner").classList.remove("hidden"); });
@@ -2154,16 +2159,15 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
 
   async function boot() {
     await loadPrefs();
-    Auth.init(); // warm the GIS token client so requestAccessToken fires within the click
-    // Stored accounts? Silently re-grant tokens (GIS keeps no refresh token).
-    const has = await Auth.loadStored();
-    if (has) {
-      const anyLive = await Auth.warmup(); // best-effort; accounts that fail show "Reconnect" in the sidebar
+    await Auth.loadStored();                 // stored accounts + their refresh tokens
+    await Auth.handleRedirect();             // returning from Google? exchange the ?code
+    const anyLive = await Auth.warmup();      // silently mint access tokens via /api/refresh
+    if (Auth.isConnected()) {
       await showApp();
       if (!anyLive) toast("Reconnect your account to load your calendar.", "err");
-      return;
+    } else {
+      renderConnect(false);
     }
-    renderConnect(false);
   }
 
   boot().catch((e) => { console.error(e); renderConnect(false); toast("Startup error — see console.", "err"); });
