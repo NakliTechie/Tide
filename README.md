@@ -1,13 +1,12 @@
 # Tide
 
-A single-file calendar page. Your Google Calendar, rendered fast and
-keyboard-first, with nothing in between — no app to install, no account, no
-server. **Your token never leaves your browser.**
+A single-file calendar page. Your Google Calendar — or **several** of them —
+rendered fast and keyboard-first, with nothing in between: no app to install, no
+account, no server. **Your calendar tokens never leave this browser.**
 
 Tide is one `index.html`: HTML + inline CSS + one inline ES module. It talks
-straight to Google with OAuth PKCE and stores everything it needs (tokens,
-prefs, a small event cache) in this browser's IndexedDB. There is no build
-step and no backend.
+straight to Google using **Google Identity Services (GIS)** — a public client
+with **no secret and no backend**. There is no build step.
 
 ---
 
@@ -15,83 +14,115 @@ step and no backend.
 
 - **No server round-trip for your calendar data or tokens. Ever.** Tide is a
   static file; the OAuth grant is strictly between your browser and Google.
-- **No telemetry, no analytics, no accounts.**
-- Tokens live **only** in IndexedDB (the "Vault"), per-origin, per-browser —
-  never in `localStorage`, never in a URL, never on a NakliTechie server.
+- **No client secret.** Tide uses the GIS token client, which needs no secret —
+  so nothing sensitive is shipped to visitors and nothing lands in this repo.
+- **No telemetry, no analytics.**
+- **Access tokens live only in memory in this tab.** They are never written to
+  disk. The only thing persisted (in IndexedDB, the "Vault") is *which accounts*
+  you connected — their email/id, so the sidebar can offer a one-click reconnect
+  — plus your prefs, per-calendar colours, and a small event cache.
 - Different people on the same URL are fully isolated, *because there is no
-  server*: Person A's tokens are physically unreachable from Person B's
-  browser.
+  server*: Person A's tokens are physically unreachable from Person B's browser.
 - **Disconnect erases everything local.** Account & settings → *Disconnect &
   erase all local data* clears the entire IndexedDB.
 
 ---
 
-## What it does (v1.0)
+## What it does
 
-- **OAuth PKCE** straight to Google (public client, no secret).
+- **Multiple Google accounts at once.** Connect as many as you like; their
+  calendars merge into one grid. A left sidebar groups calendars per account,
+  each with a colour dot + visibility toggle, plus **+ Add account** and a
+  per-account remove/reconnect.
+- **Per-calendar colours** from a curated 10-colour palette, auto-assigned for
+  distinctness and **fully customisable** — click any colour dot to pick a
+  palette swatch or a custom colour. Choices persist per calendar.
 - **Week** (default) and **Day** views: time grid, current-time line, all-day
-  row, multi-calendar with per-calendar colors, auto-contrast event text.
+  row, auto-contrast event text. On load the grid **auto-scrolls to centre the
+  current time**.
 - **Command bar** (`⌘K` / `Ctrl+K`): type an event in plain words → it parses →
   **you confirm** → it's written to Google. A deterministic parser is the floor,
   so it works with no model and offline-ish; an optional LLM ladder
-  (local bridge → WebGPU → BYOK) sharpens parsing when available.
+  (BYOK → local bridge → WebGPU) sharpens parsing when available.
 - **Create / edit / delete** single events; click a slot to create, click an
-  event to open it.
+  event to open it. Writes route to the correct account automatically.
 - **Reminders** ride Google's own `reminders` field (so your phone is notified
   whether or not this tab is open). Optional best-effort in-tab nudges while a
   Tide tab is alive.
 - **Agent face** — `window.tide.agent` exposes `listEvents`, `createEvent`,
-  `findSlots` over the same Google client (see below).
+  `findSlots` across all connected accounts (see below).
+
+---
+
+## Auth model & the reconnect tradeoff (read this)
+
+Tide uses the **GIS token client** (`google.accounts.oauth2.initTokenClient`).
+This is the only way to talk to Google Calendar from a pure static page with
+**no client secret and no backend** — Google's "Web application" OAuth client
+*requires* a secret for the classic authorization-code exchange, which would
+defeat the no-secret posture on a shared public URL.
+
+The tradeoff: GIS issues **short-lived access tokens and no refresh token**.
+
+- **Within a session** everything is seamless.
+- **On a cold page load** (and roughly hourly, when the token expires) Tide tries
+  a silent re-grant. Silent renewal relies on third-party cookies to
+  `accounts.google.com`, which modern browsers often block — so you may see a
+  one-click **Reconnect** in the sidebar. Reconnect uses the lightest prompt, so
+  for already-granted scopes it just re-picks the account (no re-consent).
+- This friction **eases substantially once the app is published and verified** —
+  apps in *Testing* mode get short grants and aggressive re-consent by design.
 
 ---
 
 ## One-time Google setup (≈5 minutes)
 
-Tide needs a **public OAuth Client ID** of your own. This is the only setup
-step, and the Client ID is meant to live in source (it is not a secret — PKCE
-means there is no client secret).
+Tide needs a **public OAuth Client ID** of your own. It is meant to live in
+source (it is *not* a secret — there is no client secret).
 
 1. In the [Google Cloud Console](https://console.cloud.google.com/), create (or
-   pick) a project, then **APIs & Services → Credentials → Create credentials →
-   OAuth client ID**, application type **Web application**.
-2. Add **Authorized JavaScript origins** and **Authorized redirect URIs** for
-   wherever you'll run Tide. The redirect URI must be the *exact* page URL:
-   - Production: e.g. `https://tide.example.com/`
-   - Local dev: `http://localhost:8788/`
-3. **OAuth consent screen → Scopes:** add
-   `https://www.googleapis.com/auth/calendar.events` and
-   `https://www.googleapis.com/auth/calendar.readonly` (plus `openid` / `email`,
-   which Tide uses only to show which account is connected).
-   These are **sensitive** scopes — see *Multi-user* below.
-4. Copy the **Client ID** and put it into Tide. Either:
+   pick) a project. **APIs & Services → Library →** enable the **Google Calendar
+   API**.
+2. **Google Auth Platform (OAuth consent screen):**
+   - App name, support email, **audience: External**.
+   - **Scopes:** add `https://www.googleapis.com/auth/calendar.events` and
+     `https://www.googleapis.com/auth/calendar.readonly` (plus `openid` / `email`,
+     which Tide uses only to show which account is connected). These are
+     **sensitive** — see *Multi-user* below.
+   - While in **Testing**, add every Google account that should be able to
+     connect as a **test user** (cap ~100).
+3. **Clients → Create client → Web application.** Add your page's origins as
+   **Authorized JavaScript origins** (the GIS token client uses origins, **not**
+   redirect URIs):
+   - Production: e.g. `https://tide.example.com`
+   - Local dev: `http://localhost:8788`
+   (Registering redirect URIs too does no harm, but GIS doesn't use them.)
+4. Copy the **Client ID** into Tide. Either:
    - edit `index.html` and set `GOOGLE_CLIENT_ID`, **or**
    - append `?client_id=YOUR_ID.apps.googleusercontent.com` to the URL, **or**
-   - run `localStorage.setItem('tide.clientId', 'YOUR_ID...')` once in the
-     console.
+   - run `localStorage.setItem('tide.clientId', 'YOUR_ID...')` once in the console.
 
 No client secret is ever used or needed.
 
 ### Multi-user / "can anyone connect?"
 
 The Client ID is shared by everyone who visits your URL; isolation is per
-browser. While the consent screen is in **Testing** mode, only Google accounts
-you've added as test users can connect (cap ~100). To let arbitrary visitors
-connect, **publish and verify** the consent screen. That verification — not the
-client registration — is the only thing standing between "I can connect" and
-"anyone can connect."
-
-v1 holds **exactly one** connection per browser profile. (Records are keyed by a
-connection id so a future version can add a second account; this isn't built in
-v1.)
+browser. While the consent screen is in **Testing**, only accounts you've added
+as test users can connect. To let arbitrary visitors connect, **publish and
+verify** the consent screen — that verification (not the client registration) is
+what stands between "I can connect" and "anyone can connect", and it also smooths
+the reconnect behaviour above. Because Tide ships **no secret**, it is safe to
+serve to arbitrary visitors on a public URL.
 
 ---
 
 ## Run it
 
-Tide is a static file — serve it with anything.
+Tide is a static file — serve it with anything, at an origin you registered in
+step 3.
 
 ```sh
-# any static server on port 8788 (must match your registered redirect URI)
+# any static server on port 8788 (must match a registered JS origin)
 python3 -m http.server 8788
 # then open http://localhost:8788/
 ```
@@ -99,20 +130,19 @@ python3 -m http.server 8788
 ### Self-host on Cloudflare Pages
 
 ```sh
-# from this repo
-npx wrangler pages deploy . --project-name tide
+# deploy just the page (don't upload working notes)
+mkdir -p .deploy && cp index.html .deploy/
+npx wrangler pages deploy .deploy --project-name tide
 ```
 
-…or connect the repo via the Cloudflare **Pages → Git integration** (build
-command: *none*; output directory: repo root). Then register the deployed origin
-+ `/` as an Authorized origin and redirect URI in Google Cloud (step 2 above).
+Then attach your custom domain to the Pages project and register that origin as
+an **Authorized JavaScript origin** in Google Cloud (step 3).
 
 ### Browser support
 
-Target is latest Chromium (Chrome/Edge): WebGPU + File System Access +
-IndexedDB. Safari/Firefox degrade gracefully — no WebGPU, so the command bar
-uses the deterministic parser (or BYOK). **The calendar view works fully
-everywhere.**
+Target is latest Chromium (Chrome/Edge): WebGPU + IndexedDB. Safari/Firefox
+degrade gracefully — no WebGPU, so the command bar uses the deterministic parser
+(or BYOK). **The calendar view works fully everywhere.**
 
 ---
 
@@ -121,34 +151,31 @@ everywhere.**
 The deterministic parser is always the floor. To sharpen natural-language
 parsing, Tide consumes an Edge-First ladder, tried in this order when available:
 
-- **C1 — BYOK:** add an Anthropic or OpenAI-compatible API key under
-  *Account & settings → Command-bar model*. The key is stored only in this
-  browser's IndexedDB and is sent only to the provider you choose.
-- **L1 — local bridge:** if `nakli-local-bridge` / Ollama is running on
+- **BYOK:** add an Anthropic or OpenAI-compatible API key under *Account &
+  settings → Command-bar model*. The key is stored only in this browser's
+  IndexedDB and is sent only to the provider you choose.
+- **Local bridge:** if `nakli-local-bridge` / Ollama is running on
   `http://localhost:11434`, Tide will try it (override with
-  `localStorage.setItem('tide.bridge', 'http://host:port')` and
-  `tide.bridgeModel`).
-- **L2 — WebGPU (Transformers.js):** off by default because of a heavy first
-  load. Enable with `localStorage.setItem('tide.l2', 'on')` on a WebGPU browser;
-  the model is pulled from a pinned CDN.
+  `localStorage.setItem('tide.bridge', 'http://host:port')`).
+- **WebGPU (Transformers.js):** off by default (heavy first load). Enable with
+  `localStorage.setItem('tide.l2', 'on')` on a WebGPU browser.
 
-If none are present or reachable, the deterministic parser handles it.
+If none are present, the deterministic parser handles it.
 
 ---
 
 ## Agent face
 
-Tide *is* a schedule API an agent can drive. From the console (or any script on
-the page):
+Tide *is* a schedule API an agent can drive, across every connected account:
 
 ```js
 await tide.agent.listEvents({ from: '2026-06-09', to: '2026-06-16' });
 await tide.agent.createEvent({ title: 'Lunch with Sam', start: '2026-06-10T13:00', end: '2026-06-10T14:00' });
 await tide.agent.findSlots({ durationMin: 30, window: { from: '2026-06-09', to: '2026-06-13' } });
+tide.accounts();   // which Google accounts are connected
 ```
 
-Same Google client as the UI; pure functions over the primitives, no UI
-dependency.
+Same Google clients as the UI; pure functions over the primitives.
 
 ---
 
@@ -164,26 +191,31 @@ over shared primitives, never one bloated app.
 ## Clearing all local data
 
 *Account & settings → Disconnect & erase all local data* wipes Tide's entire
-IndexedDB (tokens, prefs, BYOK key, event cache) and reloads. You can verify
-it's empty in DevTools → Application → IndexedDB (the `tide` database is gone /
-empty). To also revoke Tide's access on Google's side, visit your
+IndexedDB (connection identities, prefs, colours, BYOK key, event cache) and
+reloads. To also revoke Tide's access on Google's side, visit your
 [Google Account permissions](https://myaccount.google.com/permissions).
 
 ---
 
 ## Security notes
 
-- **Strict CSP** via a `<meta>` tag: `default-src 'none'`, a tight
-  `connect-src` allowlist (Google endpoints, optional BYOK hosts, the pinned
-  Transformers.js CDN, `localhost` for the bridge), and no inline event handlers
-  (everything uses `addEventListener`).
-- The single inline module is authorized by its **SHA-256 hash** in
-  `script-src` rather than `'unsafe-inline'`. **If you edit the script, you must
-  regenerate the hash** and replace it in the CSP meta:
+- **Strict CSP** via a `<meta>` tag: `default-src 'none'`, a tight `connect-src`
+  allowlist (Google endpoints, optional BYOK hosts, the pinned Transformers.js
+  CDN, `localhost` for the bridge), `frame-src` limited to `accounts.google.com`
+  (for the GIS iframe), and no inline event handlers.
+- The single inline module is authorized by its **SHA-256 hash** in `script-src`
+  rather than `'unsafe-inline'`. **If you edit the script, you must regenerate
+  the hash** and replace it in the CSP meta:
 
   ```sh
-  # extract the <script type="module"> body to script.js first, then:
-  printf 'sha256-%s' "$(openssl dgst -sha256 -binary < script.js | openssl base64)"
+  # hash the exact bytes between <script type="module"> and </script>
+  python3 - <<'PY'
+  import hashlib, base64
+  d = open('index.html','rb').read()
+  i = d.index(b'<script type="module">') + len(b'<script type="module">')
+  j = d.index(b'</script>', i)
+  print('sha256-' + base64.b64encode(hashlib.sha256(d[i:j]).digest()).decode())
+  PY
   ```
 
   (Tide loads as a single static file with no build step; this is the one manual

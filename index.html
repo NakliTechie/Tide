@@ -22,7 +22,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-iIdS6hO0i4JMpC+jG3Q5CdqcggMn0mKn9wRV+vsDdZ0=' https://accounts.google.com https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-FRW2efGODxY8r57Edu9xopgyMcRxncMSvIAOEcQBCJE=' https://accounts.google.com https://cdn.jsdelivr.net;
     frame-src https://accounts.google.com https://*.google.com;
     connect-src 'self'
       https://accounts.google.com
@@ -396,7 +396,17 @@
     .sb-cal { display: flex; align-items: center; gap: 9px; padding: 6px 6px; border-radius: 7px; cursor: pointer; font-size: 13px; color: var(--text); }
     .sb-cal:hover { background: var(--surface-2); }
     .sb-cal input { accent-color: var(--accent); flex: 0 0 auto; margin: 0; }
-    .sb-dot { width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+    .sb-dot { width: 13px; height: 13px; border-radius: 4px; flex: 0 0 auto; padding: 0; border: none; cursor: pointer;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,.14); }
+    .sb-dot:hover { box-shadow: inset 0 0 0 1px rgba(0,0,0,.14), 0 0 0 2px var(--border-strong); }
+    .color-pop { position: fixed; z-index: 200; background: var(--surface); border: 1px solid var(--border-strong);
+      border-radius: 12px; padding: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.30); }
+    .color-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; }
+    .color-sw { width: 24px; height: 24px; border-radius: 7px; border: 2px solid transparent; padding: 0; cursor: pointer; }
+    .color-sw:hover { transform: scale(1.08); }
+    .color-sw.sel { border-color: var(--text); }
+    .color-custom { display: flex; align-items: center; gap: 8px; margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--border); }
+    .color-custom input[type=color] { width: 34px; height: 26px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; background: none; cursor: pointer; }
     .sb-calname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .sb-add { margin-top: 10px; width: 100%; font-size: 13px; padding: 9px; border: 1px dashed var(--border-strong);
       border-radius: 8px; background: transparent; color: var(--text-dim); cursor: pointer; }
@@ -534,6 +544,21 @@
   };
 
   const GCAL = "https://www.googleapis.com/calendar/v3";
+
+  // A curated, readable palette (Open Color level 6). Each calendar gets one,
+  // auto-assigned for maximum distinctness and persisted; the user can override.
+  const PALETTE = [
+    "#4C6EF5", // indigo
+    "#22B8CF", // cyan
+    "#12B886", // teal
+    "#40C057", // green
+    "#FAB005", // yellow
+    "#FD7E14", // orange
+    "#FA5252", // red
+    "#E64980", // pink
+    "#BE4BDB", // grape
+    "#7950F2", // violet
+  ];
 
   // Pinned Transformers.js CDN (L2 of the LLM ladder). Lazy-loaded only when used.
   const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3";
@@ -839,6 +864,7 @@
     workingHours: { start: 9, end: 18 },
     reminderMinutes: 10,
     selectedCalendars: null, // null = use each calendar's own "selected"
+    calColors: {},          // { "connId::calId": "#hex" } — auto-assigned, user-overridable
     inTabNudges: true,
   };
   let prefs = { ...DEFAULT_PREFS };
@@ -923,6 +949,7 @@
       for (const c of cals) { c._connId = conn.id; c._connEmail = conn.email; c.key = calKey(conn.id, c.id); all.push(c); }
     }
     state.calendars = all;
+    await assignColors(all);
     const sel = prefs.selectedCalendars;
     if (sel && sel.length) {
       state.selected = new Set(sel.filter((k) => all.some((c) => c.key === k)));
@@ -933,6 +960,34 @@
       for (const conn of Auth.list()) { const prim = all.find((c) => c._connId === conn.id && c.primary); if (prim) state.selected.add(prim.key); }
       if (state.selected.size === 0) state.selected.add(all[0].key);
     }
+  }
+
+  // Give every calendar a stable colour: an explicit override if set, else the
+  // palette colour currently used by the fewest calendars (ties -> lowest index).
+  async function assignColors(cals) {
+    let dirty = false;
+    for (const c of cals) {
+      let col = prefs.calColors[c.key];
+      if (!col) {
+        const counts = PALETTE.map((p) => Object.values(prefs.calColors).filter((v) => v === p).length);
+        let best = 0;
+        for (let i = 1; i < PALETTE.length; i++) if (counts[i] < counts[best]) best = i;
+        col = PALETTE[best];
+        prefs.calColors[c.key] = col;
+        dirty = true;
+      }
+      c.color = col;
+    }
+    if (dirty) await savePrefs();
+  }
+
+  // Set (or clear) a calendar's colour override, then recolour events live.
+  async function setCalColor(cal, hex) {
+    if (hex) prefs.calColors[cal.key] = hex;
+    else delete prefs.calColors[cal.key];
+    await assignColors(state.calendars);      // re-resolves this cal (and fills any gap)
+    await savePrefs();
+    await loadEvents();                        // events carry _color, so reload to recolour
   }
 
   async function loadEvents() {
@@ -1963,8 +2018,9 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
           prefs.selectedCalendars = [...state.selected]; await savePrefs();
           await loadEvents();
         });
-        list.append(h("label", { class: "sb-cal" }, cb,
-          h("span", { class: "sb-dot", style: { background: c.color } }),
+        const dot = h("button", { type: "button", class: "sb-dot", title: "Change colour", "aria-label": "Change colour for " + c.summary, style: { background: c.color } });
+        dot.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); openColorPicker(dot, c); });
+        list.append(h("label", { class: "sb-cal" }, cb, dot,
           h("span", { class: "sb-calname", text: c.summary + (c.primary ? " · primary" : "") })));
       }
       el.append(list);
@@ -1986,6 +2042,36 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
       console.error(e);
       toast("Couldn't add account: " + (e && (e.message || e.type) || "cancelled"), "err");
     }
+  }
+
+  /* ---- Per-calendar colour picker (palette swatches + custom) ------------ */
+  let _colorPop = null;
+  function closeColorPop() {
+    if (!_colorPop) return;
+    _colorPop.remove(); _colorPop = null;
+    document.removeEventListener("click", onDocClickForPop, true);
+  }
+  function onDocClickForPop(e) { if (_colorPop && !_colorPop.contains(e.target)) closeColorPop(); }
+  function normalizeHex(v) { return /^#[0-9a-f]{6}$/i.test(v || "") ? v : "#4C6EF5"; }
+  function openColorPicker(anchor, cal) {
+    closeColorPop();
+    const grid = h("div", { class: "color-grid" });
+    for (const hex of PALETTE) {
+      const sel = (cal.color || "").toLowerCase() === hex.toLowerCase();
+      const sw = h("button", { type: "button", class: "color-sw" + (sel ? " sel" : ""), style: { background: hex }, title: hex, "aria-label": hex });
+      sw.addEventListener("click", async (e) => { e.preventDefault(); e.stopPropagation(); closeColorPop(); await setCalColor(cal, hex); });
+      grid.append(sw);
+    }
+    const custom = h("input", { type: "color", value: normalizeHex(cal.color), "aria-label": "Custom colour" });
+    custom.addEventListener("change", async (e) => { e.stopPropagation(); closeColorPop(); await setCalColor(cal, custom.value); });
+    const pop = h("div", { class: "color-pop", role: "dialog", "aria-label": "Calendar colour" },
+      grid, h("div", { class: "color-custom" }, h("span", { class: "small muted", text: "Custom" }), custom));
+    document.body.append(pop);
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + "px";
+    pop.style.top = Math.min(r.bottom + 6, window.innerHeight - pop.offsetHeight - 8) + "px";
+    _colorPop = pop;
+    setTimeout(() => document.addEventListener("click", onDocClickForPop, true), 0);
   }
 
   /* ====================================================================== *
