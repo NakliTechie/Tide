@@ -113,9 +113,10 @@ function bearer(request) {
   return h.startsWith("Bearer ") ? h.slice(7) : null;
 }
 
-// scope ∈ {evt, day}; id is the event id or a YYYY-MM-DD date. Keep keys opaque.
+// scope ∈ {evt, day, list}; id is the event id, a YYYY-MM-DD date, or a scratchpad
+// list id. Keep keys opaque. `list` holds the sidebar scratchpad (a JSON array).
 function noteKey(scope, sub, id) { return `${scope}:${sub}:${id}`; }
-function validScope(s) { return s === "evt" || s === "day"; }
+function validScope(s) { return s === "evt" || s === "day" || s === "list"; }
 
 async function handleNote(request, env) {
   if (!env.NOTES) return json({ error: "notes_unavailable" }, 501);
@@ -133,7 +134,7 @@ async function handleNote(request, env) {
   if (request.method === "PUT") {
     let body;
     try { body = await request.json(); } catch { return json({ error: "invalid_json" }, 400); }
-    const { scope, id, text } = body || {};
+    const { scope, id, text, label } = body || {};
     if (!validScope(scope) || !id) return json({ error: "missing_params" }, 400);
     const key = noteKey(scope, sub, id);
     if (typeof text !== "string" || text.trim() === "") {
@@ -141,11 +142,40 @@ async function handleNote(request, env) {
       return json({ ok: true, empty: true });
     }
     if (new TextEncoder().encode(text).length > MAX_NOTE_BYTES) return json({ error: "note_too_large" }, 413);
-    await env.NOTES.put(key, text);
-    return json({ ok: true });
+    // Store label + updated as KV metadata so the aggregation list (below) can be
+    // built from a single list() call without fetching every note's body.
+    const updated = new Date().toISOString();
+    await env.NOTES.put(key, text, { metadata: { label: (typeof label === "string" ? label : "").slice(0, 200), updated } });
+    return json({ ok: true, updated });
   }
 
   return json({ error: "method_not_allowed" }, 405);
+}
+
+// GET /api/notes — aggregate this user's per-event + per-day notes for the "All
+// notes" tab. Reads keys + metadata (label/updated) via list(); no body fetch.
+async function handleNotesList(request, env) {
+  if (!env.NOTES) return json({ error: "notes_unavailable" }, 501);
+  if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
+  const sub = await subForToken(bearer(request));
+  if (!sub) return json({ error: "unauthorized" }, 401);
+
+  const out = [];
+  for (const scope of ["evt", "day"]) {
+    const prefix = `${scope}:${sub}:`;
+    let cursor;
+    do {
+      const page = await env.NOTES.list({ prefix, cursor, limit: 1000 });
+      for (const k of page.keys) {
+        const md = k.metadata || {};
+        out.push({ scope, id: k.name.slice(prefix.length), label: md.label || "", updated: md.updated || "" });
+      }
+      cursor = page.list_complete ? null : page.cursor;
+    } while (cursor);
+  }
+  // Newest first; undated (pre-metadata) entries sort last.
+  out.sort((a, b) => (b.updated || "").localeCompare(a.updated || ""));
+  return json({ notes: out });
 }
 
 export default {
@@ -154,6 +184,7 @@ export default {
     if (url.pathname === "/api/token") return handleToken(request, env);
     if (url.pathname === "/api/refresh") return handleRefresh(request, env);
     if (url.pathname === "/api/note") return handleNote(request, env);
+    if (url.pathname === "/api/notes") return handleNotesList(request, env);
     // Everything else is a static asset. With `main` + `assets`, matched assets
     // are served before the Worker runs; this fallback only catches unmatched
     // non-API paths.

@@ -22,7 +22,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-wd1uBY11IuokC3gcxt6K/Sw16mBDMSaaIrNZYMTv1XU=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-0M2NJShCTGoGRGiH6gO/x6+oq37dohkfdAgEhJihSOU=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -467,6 +467,42 @@
     .detail-foot { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface-2); }
     .detail-foot .btn { flex: 0 0 auto; }
     .detail-foot .spacer { flex: 1; }
+
+    /* Sidebar Notes button — pinned to the bottom of the sidebar */
+    .sb-notes { position: sticky; bottom: 0; margin-top: 12px; width: 100%; display: flex; align-items: center; gap: 9px;
+      font-size: 13px; font-weight: 550; padding: 9px 10px; border: 1px solid var(--border-strong); border-radius: 8px;
+      background: var(--surface); color: var(--text); cursor: pointer; }
+    .sb-notes:hover { background: var(--surface-2); }
+    .sb-notes .sb-notes-ic { display: inline-flex; color: var(--text-dim); }
+
+    /* Notes panel — tabs + scratchpad + aggregation list */
+    .notes-tabs { display: flex; gap: 2px; padding: 8px 12px 0; border-bottom: 1px solid var(--border); }
+    .notes-tab { flex: 0 0 auto; padding: 7px 12px; font-size: 13px; font-weight: 550; border: none; background: none;
+      color: var(--text-faint); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+    .notes-tab:hover { color: var(--text-dim); }
+    .notes-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+    .scratch-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+    .scratch-row { display: flex; align-items: center; gap: 9px; padding: 5px 4px; border-radius: 7px; overflow: hidden;
+      transition: opacity .22s ease, max-height .22s ease, padding .22s ease; max-height: 40px; }
+    .scratch-row:hover { background: var(--surface-2); }
+    .scratch-row input[type=checkbox] { accent-color: var(--accent); flex: 0 0 auto; width: 15px; height: 15px; cursor: pointer; }
+    .scratch-text { flex: 1; min-width: 0; border: none; background: transparent; color: var(--text); font-size: 13.5px; padding: 2px 0; }
+    .scratch-text:focus { outline: none; }
+    .scratch-row.done .scratch-text { text-decoration: line-through; color: var(--text-faint); }
+    .scratch-row.removing { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
+    .scratch-add { width: 100%; border: 1px dashed var(--border-strong); background: transparent; color: var(--text);
+      font-size: 13.5px; padding: 8px 10px; border-radius: 8px; }
+    .scratch-add:focus { outline: none; border-style: solid; border-color: var(--accent); }
+    .scratch-empty { padding: 4px 2px 10px; }
+
+    .notelist { display: flex; flex-direction: column; gap: 1px; }
+    .notelist-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 9px 8px;
+      border: none; background: none; color: var(--text); cursor: pointer; border-radius: 7px; font-size: 13.5px; }
+    .notelist-row:hover { background: var(--surface-2); }
+    .notelist-ic { flex: 0 0 auto; display: inline-flex; color: var(--text-faint); }
+    .notelist-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .notelist-when { flex: 0 0 auto; color: var(--text-faint); font-size: 11.5px; }
 
     @media (max-width: 720px) {
       .period { min-width: auto; font-size: 13px; }
@@ -1517,14 +1553,20 @@
       if (!r.ok) throw new Error("note get " + r.status);
       return (await r.json()).text || "";
     },
-    async put(conn, scope, id, text) {
+    async put(conn, scope, id, text, label) {
       const tok = await Auth.tokenFor(conn);
       const r = await fetch("/api/note", {
         method: "PUT",
         headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" },
-        body: JSON.stringify({ scope, id, text }),
+        body: JSON.stringify({ scope, id, text, label }),
       });
       if (!r.ok) throw new Error("note put " + r.status);
+    },
+    async list(conn) {
+      const tok = await Auth.tokenFor(conn);
+      const r = await fetch("/api/notes", { headers: { Authorization: "Bearer " + tok } });
+      if (!r.ok) throw new Error("notes list " + r.status);
+      return (await r.json()).notes || [];
     },
   };
 
@@ -1644,7 +1686,7 @@
           initial: "",
           placeholder: "Add a private note…",
           scopeChip: chip(ICON.lock, "Private note · read-only event"),
-          onSave: (val) => Notes.put(conn, "evt", e.id, val),
+          onSave: (val) => Notes.put(conn, "evt", e.id, val, e.summary || "(busy)"),
         });
         holder.flush = nf.flush;
         notesRow.append(nf.node);
@@ -1676,7 +1718,7 @@
         initial: "",
         placeholder: "Notes for this day…",
         scopeChip: chip(ICON.lock, "Private day note"),
-        onSave: (val) => Notes.put(conn, "day", id, val),
+        onSave: (val) => Notes.put(conn, "day", id, val, date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" })),
       });
       holder.flush = nf.flush;
       notesRow.append(nf.node);
@@ -1687,6 +1729,149 @@
   }
 
   const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  /* ---- Notes panel — scratchpad + aggregation of saved notes ----------- */
+  function openNotesPanel() {
+    const conn = Auth.list()[0];
+    if (!conn) { toast("Connect an account to use Notes", "err"); return; }
+    showDetail("notes", (holder) => {
+      let tab = "scratch";
+      const bodyEl = h("div", { class: "detail-body" });
+      const scratchBtn = h("button", { class: "notes-tab", text: "Scratchpad" });
+      const allBtn = h("button", { class: "notes-tab", text: "All notes" });
+      const tabs = h("div", { class: "notes-tabs" }, scratchBtn, allBtn);
+      scratchBtn.addEventListener("click", () => setTab("scratch"));
+      allBtn.addEventListener("click", () => setTab("all"));
+      function setTab(t) {
+        tab = t;
+        scratchBtn.classList.toggle("active", t === "scratch");
+        allBtn.classList.toggle("active", t === "all");
+        t === "scratch" ? renderScratch() : renderAll();
+      }
+
+      /* --- Scratchpad: row-wise checklist in KV scope "list" ------------- */
+      let items = [];                    // [{id, text, done}]
+      const removeTimers = new Map();    // id -> timeout (checked → vanish)
+      const saveScratch = debounce(persistScratch, 500);
+      function persistScratch() {
+        return Notes.put(conn, "list", "main", JSON.stringify(items)).catch((e) => console.warn("scratch save", e));
+      }
+      holder.flush = () => { for (const t of removeTimers.values()) clearTimeout(t); return persistScratch(); };
+
+      const listEl = h("div", { class: "scratch-list" });
+      const addInput = h("input", { class: "scratch-add", type: "text", placeholder: "Add an item…", "aria-label": "Add item" });
+      const emptyHint = h("div", { class: "muted small scratch-empty", text: "No items yet — type below and press Enter." });
+      addInput.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter" || !addInput.value.trim()) return;
+        const it = { id: "i" + randString(8), text: addInput.value.trim(), done: false };
+        items.push(it);
+        addInput.value = "";
+        emptyHint.remove();
+        // insert new row above the done section
+        const firstDone = listEl.querySelector(".scratch-row.done");
+        listEl.insertBefore(rowFor(it), firstDone || null);
+        saveScratch();
+      });
+
+      function rowFor(it) {
+        const cb = h("input", { type: "checkbox", "aria-label": "Done" });
+        cb.checked = it.done;
+        const txt = h("input", { class: "scratch-text", type: "text", value: it.text, "aria-label": "Item text" });
+        const row = h("div", { class: "scratch-row" + (it.done ? " done" : "") }, cb, txt);
+        txt.addEventListener("input", () => { it.text = txt.value; saveScratch(); });
+        cb.addEventListener("change", () => {
+          it.done = cb.checked;
+          saveScratch();
+          if (it.done) {
+            row.classList.add("done");
+            listEl.appendChild(row);                 // sink below the unchecked items
+            const t = setTimeout(() => {
+              removeTimers.delete(it.id);
+              row.classList.add("removing");
+              setTimeout(() => {
+                row.remove();
+                items = items.filter((x) => x.id !== it.id);
+                persistScratch();
+                if (!items.length) listEl.appendChild(emptyHint);
+              }, 240);
+            }, 2400);
+            removeTimers.set(it.id, t);
+          } else {
+            const t = removeTimers.get(it.id); if (t) { clearTimeout(t); removeTimers.delete(it.id); }
+            row.classList.remove("done", "removing");
+            const firstDone = listEl.querySelector(".scratch-row.done");
+            listEl.insertBefore(row, firstDone || null); // float back up
+          }
+        });
+        return row;
+      }
+
+      function renderScratch() {
+        bodyEl.replaceChildren();
+        listEl.replaceChildren();
+        const undone = items.filter((i) => !i.done), done = items.filter((i) => i.done);
+        for (const it of [...undone, ...done]) listEl.append(rowFor(it));
+        if (!items.length) listEl.append(emptyHint);
+        bodyEl.append(h("div", { class: "scratch" }, listEl, addInput));
+      }
+
+      /* --- All notes: aggregate saved day + event notes ----------------- */
+      function renderAll() {
+        bodyEl.replaceChildren(h("div", { class: "muted small", style: { padding: "6px 2px" }, text: "Loading…" }));
+        Notes.list(conn).then((notes) => {
+          bodyEl.replaceChildren();
+          if (!notes.length) {
+            bodyEl.append(h("div", { class: "muted small", style: { padding: "8px 2px", lineHeight: "1.5" },
+              text: "No saved notes yet. Notes you add to a day, or to a read-only event, show up here." }));
+            return;
+          }
+          const listWrap = h("div", { class: "notelist" });
+          for (const n of notes) {
+            const label = n.label || n.id;
+            const when = n.updated ? new Date(n.updated).toLocaleDateString([], { month: "short", day: "numeric" }) : "";
+            const row = h("button", { class: "notelist-row" },
+              h("span", { class: "notelist-ic", html: n.scope === "day" ? ICON.note : ICON.lock }),
+              h("span", { class: "notelist-label", text: label }),
+              h("span", { class: "notelist-when", text: when }));
+            row.addEventListener("click", () => openAggregatedNote(n));
+            listWrap.append(row);
+          }
+          bodyEl.append(listWrap);
+        }).catch((e) => { console.warn("notes list", e); bodyEl.replaceChildren(h("div", { class: "muted small", text: "Couldn't load notes." })); });
+      }
+
+      const x = h("button", { class: "iconbtn detail-x", "aria-label": "Close", html: ICON.close });
+      x.addEventListener("click", closeDetail);
+      const node = h("div", {},
+        h("div", { class: "detail-head" }, h("div", { class: "detail-accent" }), h("h2", { class: "detail-title", text: "Notes" }), x),
+        tabs, bodyEl);
+
+      setTab("scratch");
+      Notes.get(conn, "list", "main").then((t) => {
+        try { items = t ? JSON.parse(t) : []; } catch { items = []; }
+        if (!Array.isArray(items)) items = [];
+        if (tab === "scratch") renderScratch();
+      }).catch(() => {});
+      return node;
+    });
+  }
+
+  // Open a saved note from the aggregation list. Day → the day panel; event →
+  // its detail if it's in view, else a minimal read-only view of the stored note.
+  function openAggregatedNote(n) {
+    if (n.scope === "day") { openDayNote(new Date(n.id + "T00:00:00")); return; }
+    const ev = state.events.find((e) => e.id === n.id);
+    if (ev) { openEventDetail(ev); return; }
+    const conn = Auth.list()[0];
+    showDetail(`evtnote:${n.id}`, () => {
+      const body = h("div", {}, h("div", { class: "detail-when", text: "Saved note" }));
+      const row = h("div", { class: "detail-row" }, h("div", { class: "lbl", text: "Note" }),
+        h("div", { class: "detail-desc", text: "Loading…" }));
+      body.append(row);
+      Notes.get(conn, "evt", n.id).then((t) => { row.querySelector(".detail-desc").textContent = t || "(empty)"; }).catch(() => {});
+      return detailShell({ title: n.label || "Event note", body, foot: [] });
+    });
+  }
 
   /* ====================================================================== *
    *  Command bar — parse ladder + deterministic floor + confirm + write    *
@@ -2299,6 +2484,12 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     const add = h("button", { class: "sb-add", text: "+ Add account" });
     add.addEventListener("click", () => addAccountFlow());
     el.append(add);
+
+    // Notes button — pinned to the bottom of the sidebar.
+    const notesBtn = h("button", { class: "sb-notes", title: "Notes — scratchpad & saved notes" },
+      h("span", { class: "sb-notes-ic", html: ICON.note }), h("span", { text: "Notes" }));
+    notesBtn.addEventListener("click", () => openNotesPanel());
+    el.append(notesBtn);
   }
 
   // Adding/connecting an account is a full-page redirect to Google; the returning
