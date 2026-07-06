@@ -10,8 +10,10 @@
     Content-Security-Policy.
     script-src uses 'self' for the (future) external module and the pinned
     Transformers.js CDN. The inline module below is authorised by its sha256
-    hash (see __CSP_SCRIPT_HASH__). Regenerate the hash if the script changes:
-        openssl dgst -sha256 -binary < script.js | openssl base64
+    hash. WARNING: if you edit the inline module script, YOU MUST regenerate this
+    hash or the browser silently refuses to run the whole app (blank connect
+    screen, no console error):
+        node scripts/rehash-csp.mjs
   -->
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'none';
@@ -20,7 +22,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-3vOfgDF/IcjatTAP+eU69qO5ndUFRXrzI1M83w+oZ+E=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-wd1uBY11IuokC3gcxt6K/Sw16mBDMSaaIrNZYMTv1XU=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -415,16 +417,72 @@
     .acctrow-email { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .btn.small { font-size: 12px; padding: 4px 10px; }
 
+    /* Per-day note affordance in the column header */
+    .daycol-head { position: relative; }
+    .daynote-btn {
+      position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; padding: 0;
+      display: grid; place-items: center; border: none; border-radius: 6px; cursor: pointer;
+      background: transparent; color: var(--text-faint); opacity: 0; transition: opacity .12s;
+    }
+    .daycol-head:hover .daynote-btn, .daynote-btn.has-note { opacity: 1; }
+    .daynote-btn:hover { background: var(--surface-2); color: var(--text); }
+    .daynote-btn.has-note { color: var(--accent); }
+
+    /* ------------------------------------------------------------------ *
+     * Detail panel — Notion-style event/day inspector on the right        *
+     * ------------------------------------------------------------------ */
+    .detail {
+      width: 340px; flex: 0 0 340px; box-sizing: border-box;
+      border-left: 1px solid var(--border); background: var(--surface);
+      display: flex; flex-direction: column; min-height: 0;
+      animation: detail-in .16s ease;
+    }
+    .detail.hidden { display: none; }
+    @keyframes detail-in { from { opacity: 0; transform: translateX(10px); } }
+    .detail-head { display: flex; align-items: flex-start; gap: 10px; padding: 16px 16px 12px; border-bottom: 1px solid var(--border); }
+    .detail-accent { width: 4px; align-self: stretch; border-radius: 3px; flex: 0 0 auto; background: var(--accent); }
+    .detail-title { flex: 1; min-width: 0; margin: 0; font-size: 16px; font-weight: 650; line-height: 1.3; word-break: break-word; }
+    .detail-x { flex: 0 0 auto; width: 26px; height: 26px; color: var(--text-faint); }
+    .detail-x:hover { color: var(--text); }
+    .detail-body { padding: 14px 16px 20px; overflow-y: auto; flex: 1 1 auto; }
+    .detail-when { font-size: 13px; color: var(--text-dim); margin-bottom: 14px; }
+    .detail-row { margin-bottom: 14px; }
+    .detail-row .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); margin-bottom: 4px; }
+    .detail-row .val { font-size: 13.5px; word-break: break-word; }
+    .detail-row .val a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+    .detail-desc { font-size: 13px; white-space: pre-wrap; color: var(--text-dim); background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 9px 11px; word-break: break-word; }
+    a.joinrow { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; text-decoration: none;
+      padding: 7px 13px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-size: 13.5px; }
+    a.joinrow:hover { filter: brightness(0.97); }
+    .note-area {
+      width: 100%; min-height: 120px; resize: vertical; font-size: 13.5px; line-height: 1.5;
+      border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 10px 11px;
+      background: var(--surface); color: var(--text); font-family: inherit;
+    }
+    .note-area:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    .note-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; min-height: 16px; font-size: 11.5px; color: var(--text-faint); }
+    .note-scope { display: inline-flex; align-items: center; gap: 5px; }
+    .note-scope svg { width: 12px; height: 12px; }
+    .detail-foot { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface-2); }
+    .detail-foot .btn { flex: 0 0 auto; }
+    .detail-foot .spacer { flex: 1; }
+
     @media (max-width: 720px) {
       .period { min-width: auto; font-size: 13px; }
       .brand .tide-sub { display: none; }
       .topbar { gap: 8px; padding: 0 8px; }
+    }
+    @media (max-width: 900px) {
+      .detail { width: 300px; flex-basis: 300px; }
     }
     @media (max-width: 640px) {
       .sidebar { width: 190px; flex-basis: 190px; }
     }
     @media (max-width: 520px) {
       .sidebar { display: none; }
+      /* Detail panel becomes a full-screen sheet over the calendar */
+      .detail { position: fixed; inset: 0; width: auto; flex-basis: auto; z-index: 60; }
     }
   </style>
 </head>
@@ -489,6 +547,7 @@
           <div class="cal-grid" id="calGrid"></div>
         </div>
       </main>
+      <aside class="detail hidden" id="detailRoot" aria-label="Details" tabindex="-1"></aside>
     </div>
   </div>
 
@@ -596,6 +655,10 @@
     close: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
     search: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>',
     trash: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+    note: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+    lock: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+    globe: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20"/></svg>',
+    video: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m23 7-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>',
   };
 
   /* ====================================================================== *
@@ -1093,6 +1156,12 @@
     head.replaceChildren(h("div", { class: "corner" }));
     days.forEach((d, i) => {
       const isToday = sameDay(d, today);
+      const dayDate = new Date(d);
+      const noteBtn = h("button", {
+        class: "daynote-btn", title: "Day note", "aria-label": "Day note for " + d.toLocaleDateString([], { month: "long", day: "numeric" }),
+        html: ICON.note,
+      });
+      noteBtn.addEventListener("click", (ev) => { ev.stopPropagation(); openDayNote(dayDate); });
       head.append(h("div", {
         class: "daycol-head" + (isToday ? " today" : ""),
         role: "button", tabindex: "0",
@@ -1102,6 +1171,7 @@
       },
         h("span", { class: "dow", text: WDAY[d.getDay()] }),
         h("span", { class: "dnum", text: String(d.getDate()) }),
+        noteBtn,
       ));
     });
 
@@ -1437,31 +1507,186 @@
     return frag;
   }
 
-  function openEventDetail(e) {
-    const cal = state.calendars.find((c) => c.key === e._calKey) || state.calendars.find((c) => c.id === e._calId);
-    const when = isAllDay(e)
-      ? eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }) + " · all day"
-      : `${eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${fmtTime(eventStart(e))} – ${fmtTime(eventEnd(e))}`;
-    // A meeting link may be Google's own hangoutLink, or buried in the notes/location.
-    const joinLink = e.hangoutLink || firstMeetingLink(e.description, e.location);
-    const body = h("div", {},
-      h("dl", { class: "kv" },
-        h("dt", { text: "When" }), h("dd", { text: when }),
-        joinLink ? h("dt", { text: "Join" }) : null,
-        joinLink ? h("dd", {}, h("a", { class: "joinlink", href: joinLink, target: "_blank", rel: "noopener noreferrer", text: joinLink })) : null,
-        cal ? h("dt", { text: "Calendar" }) : null, cal ? h("dd", { text: cal.summary }) : null,
-        e.location ? h("dt", { text: "Where" }) : null, e.location ? h("dd", {}, linkedText(e.location)) : null,
-        e.description ? h("dt", { text: "Notes" }) : null, e.description ? h("dd", {}, linkedText(e.description)) : null,
-      ),
-    );
-    const writable = cal && (cal.accessRole === "owner" || cal.accessRole === "writer");
-    const editBtn = h("button", { class: "btn", text: "Edit", disabled: !writable });
-    editBtn.addEventListener("click", () => openEventEditor({ start: eventStart(e), end: eventEnd(e), title: e.summary }, e));
-    const gcalBtn = e.htmlLink ? h("a", { class: "btn ghost", href: e.htmlLink, target: "_blank", rel: "noopener", text: "Open in Google" }) : null;
-    const close = h("button", { class: "btn ghost", text: "Close" });
-    close.addEventListener("click", closeModal);
-    openModal(modalShell({ title: e.summary || "(busy)", body, foot: [gcalBtn, h("div", { style: { flex: 1 } }), close, editBtn].filter(Boolean) }));
+  /* ---- Private notes API (Cloudflare KV via the Worker) ---------------- */
+  const Notes = {
+    async get(conn, scope, id) {
+      const tok = await Auth.tokenFor(conn);
+      const r = await fetch(`/api/note?scope=${scope}&id=${encodeURIComponent(id)}`, {
+        headers: { Authorization: "Bearer " + tok },
+      });
+      if (!r.ok) throw new Error("note get " + r.status);
+      return (await r.json()).text || "";
+    },
+    async put(conn, scope, id, text) {
+      const tok = await Auth.tokenFor(conn);
+      const r = await fetch("/api/note", {
+        method: "PUT",
+        headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" },
+        body: JSON.stringify({ scope, id, text }),
+      });
+      if (!r.ok) throw new Error("note put " + r.status);
+    },
+  };
+
+  /* ---- Detail panel infrastructure (right-hand Notion-style inspector) -- */
+  let activeDetail = null; // { key, flush }
+  function closeDetail() {
+    if (!activeDetail) return;
+    const { flush } = activeDetail;
+    activeDetail = null;
+    const root = $("#detailRoot");
+    root.classList.add("hidden");
+    root.replaceChildren();
+    if (flush) flush(); // fire-and-forget save of any pending note edit
   }
+  // Returns false if this same key was already open (caller should just bail —
+  // clicking the same event again toggles the panel shut).
+  function showDetail(key, buildFn) {
+    if (activeDetail && activeDetail.key === key) { closeDetail(); return; }
+    if (activeDetail && activeDetail.flush) activeDetail.flush();
+    const holder = { flush: null };
+    activeDetail = { key, get flush() { return holder.flush; } };
+    const node = buildFn(holder); // buildFn may set holder.flush
+    const root = $("#detailRoot");
+    root.replaceChildren(node);
+    root.classList.remove("hidden");
+  }
+
+  // A self-saving note textarea. Debounced autosave + save-on-blur; returns a
+  // `flush()` that persists any unsaved edit immediately (used on close).
+  function noteField({ initial, placeholder, scopeChip, onSave }) {
+    const ta = h("textarea", { class: "note-area", placeholder: placeholder || "Add a note…" });
+    ta.value = initial || "";
+    const status = h("span", {});
+    const meta = h("div", { class: "note-meta" }, scopeChip, h("span", { style: { flex: 1 } }), status);
+    let saved = ta.value, seq = 0;
+    async function persist() {
+      const val = ta.value;
+      if (val === saved) return;
+      const my = ++seq;
+      status.textContent = "Saving…";
+      try {
+        await onSave(val);
+        if (my !== seq) return;
+        saved = val; status.textContent = "Saved";
+        setTimeout(() => { if (my === seq && status.textContent === "Saved") status.textContent = ""; }, 1400);
+      } catch (err) {
+        if (my === seq) status.textContent = "Save failed — retry";
+        console.warn("note save failed", err);
+      }
+    }
+    const debPersist = debounce(persist, 700);
+    ta.addEventListener("input", debPersist);
+    ta.addEventListener("blur", persist);
+    return { node: h("div", {}, ta, meta), flush: persist };
+  }
+
+  function chip(icon, text) {
+    return h("span", { class: "note-scope" }, h("span", { html: icon }), h("span", { text }));
+  }
+
+  function detailShell({ accent, title, body, foot }) {
+    const x = h("button", { class: "iconbtn detail-x", "aria-label": "Close", html: ICON.close });
+    x.addEventListener("click", closeDetail);
+    return h("div", {},
+      h("div", { class: "detail-head" },
+        h("div", { class: "detail-accent", style: accent ? { background: accent } : {} }),
+        h("h2", { class: "detail-title", text: title }),
+        x,
+      ),
+      h("div", { class: "detail-body" }, body),
+      foot && foot.length ? h("div", { class: "detail-foot" }, ...foot) : null,
+    );
+  }
+
+  function openEventDetail(e) {
+    const key = `evt:${e._calKey || e._calId}:${e.id}`;
+    showDetail(key, (holder) => {
+      const cal = state.calendars.find((c) => c.key === e._calKey) || state.calendars.find((c) => c.id === e._calId);
+      const writable = cal && (cal.accessRole === "owner" || cal.accessRole === "writer");
+      const { bg } = eventColors(e);
+      const when = isAllDay(e)
+        ? eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }) + " · all day"
+        : `${eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${fmtTime(eventStart(e))} – ${fmtTime(eventEnd(e))}`;
+      const joinLink = e.hangoutLink || firstMeetingLink(e.description, e.location);
+
+      const body = h("div", {}, h("div", { class: "detail-when", text: when }));
+      if (joinLink) body.append(h("div", { class: "detail-row" },
+        h("a", { class: "joinrow", href: joinLink, target: "_blank", rel: "noopener noreferrer" },
+          h("span", { html: ICON.video }), h("span", { text: "Join meeting" }))));
+      if (cal) body.append(h("div", { class: "detail-row" },
+        h("div", { class: "lbl", text: "Calendar" }), h("div", { class: "val", text: cal.summary })));
+      if (e.location) body.append(h("div", { class: "detail-row" },
+        h("div", { class: "lbl", text: "Where" }), h("div", { class: "val" }, linkedText(e.location))));
+
+      // Notes. Writable → the note IS the Google description (syncs to Google).
+      // Read-only → the Google description is shown read-only, plus a private note.
+      const notesRow = h("div", { class: "detail-row" }, h("div", { class: "lbl", text: "Notes" }));
+      body.append(notesRow);
+
+      if (writable) {
+        const nf = noteField({
+          initial: e.description || "",
+          placeholder: "Add notes… (saved to this Google event)",
+          scopeChip: chip(ICON.globe, "Syncs to Google Calendar"),
+          onSave: async (val) => {
+            await Api.updateEvent(Auth.byId(e._connId), e._calId, e.id, { description: val });
+            e.description = val; // keep in-memory event fresh
+          },
+        });
+        holder.flush = nf.flush;
+        notesRow.append(nf.node);
+      } else {
+        if (e.description) notesRow.append(
+          h("div", { class: "detail-desc", style: { marginBottom: "10px" } }, linkedText(e.description)));
+        const conn = Auth.byId(e._connId);
+        const nf = noteField({
+          initial: "",
+          placeholder: "Add a private note…",
+          scopeChip: chip(ICON.lock, "Private note · read-only event"),
+          onSave: (val) => Notes.put(conn, "evt", e.id, val),
+        });
+        holder.flush = nf.flush;
+        notesRow.append(nf.node);
+        // Load any existing private note asynchronously.
+        Notes.get(conn, "evt", e.id).then((t) => { if (t && !nf.node.querySelector("textarea").value) nf.node.querySelector("textarea").value = t; })
+          .catch(() => {});
+      }
+
+      const foot = [];
+      const editBtn = h("button", { class: "btn", text: "Edit", disabled: !writable });
+      editBtn.addEventListener("click", () => { closeDetail(); openEventEditor({ start: eventStart(e), end: eventEnd(e), title: e.summary }, e); });
+      if (e.htmlLink) foot.push(h("a", { class: "btn ghost", href: e.htmlLink, target: "_blank", rel: "noopener", text: "Open in Google" }));
+      foot.push(h("span", { class: "spacer" }), editBtn);
+
+      return detailShell({ accent: bg, title: e.summary || "(busy)", body, foot });
+    });
+  }
+
+  function openDayNote(date) {
+    const conn = Auth.list()[0];
+    if (!conn) { toast("Connect an account to add day notes", "err"); return; }
+    const id = ymd(date);
+    const key = `day:${id}`;
+    showDetail(key, (holder) => {
+      const body = h("div", {},
+        h("div", { class: "detail-when", text: date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" }) }));
+      const notesRow = h("div", { class: "detail-row" }, h("div", { class: "lbl", text: "Day note" }));
+      const nf = noteField({
+        initial: "",
+        placeholder: "Notes for this day…",
+        scopeChip: chip(ICON.lock, "Private day note"),
+        onSave: (val) => Notes.put(conn, "day", id, val),
+      });
+      holder.flush = nf.flush;
+      notesRow.append(nf.node);
+      body.append(notesRow);
+      Notes.get(conn, "day", id).then((t) => { const ta = nf.node.querySelector("textarea"); if (t && !ta.value) ta.value = t; }).catch(() => {});
+      return detailShell({ title: date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }), body, foot: [] });
+    });
+  }
+
+  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
   /* ====================================================================== *
    *  Command bar — parse ladder + deterministic floor + confirm + write    *
@@ -2120,6 +2345,9 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     // global: command bar + escape always available
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if (Auth.isConnected()) openCommandBar(); return; }
     if (e.key === "Escape" && activeModal) { e.preventDefault(); closeModal(); return; }
+    // Escape closes the detail panel too — before the isTyping guard so it works
+    // while the cursor is in the note textarea (flush-saves on close).
+    if (e.key === "Escape" && activeDetail) { e.preventDefault(); closeDetail(); return; }
     if (activeModal || isTyping(document.activeElement) || e.metaKey || e.ctrlKey || e.altKey) return;
     if (!Auth.isConnected()) return;
     switch (e.key) {

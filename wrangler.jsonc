@@ -12,6 +12,12 @@
     // via `wrangler secret put GOOGLE_CLIENT_SECRET` (and .dev.vars for local dev).
     "GOOGLE_CLIENT_ID": "604859367732-t8rgb4idco9mgd96eqs88u446v1tla00.apps.googleusercontent.com"
   },
+  "kv_namespaces": [
+    // Private per-user notes (read-only events + per-day scratchpads). Keyed by the
+    // Google user `sub` (verified server-side from the caller's access token) so the
+    // Worker can store notes for events/days that can't live on Google itself.
+    { "binding": "NOTES", "id": "cd46b03f2f224e09a52e722eb5e1b805" }
+  ],
   "routes": [
     { "pattern": "tide.naklitechie.com", "custom_domain": true }
   ],
