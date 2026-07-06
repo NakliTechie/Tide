@@ -22,7 +22,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-0M2NJShCTGoGRGiH6gO/x6+oq37dohkfdAgEhJihSOU=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-K3PIUoXOBSkHEOW9j+gZy9F2UMYAkqDfP5VfQWTqcf8=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -431,16 +431,19 @@
     /* ------------------------------------------------------------------ *
      * Detail panel — Notion-style event/day inspector on the right        *
      * ------------------------------------------------------------------ */
+    /* Persistent right rail (desktop): always in flow so opening a view never
+       reflows the calendar. On narrow screens it becomes an on-demand sheet. */
     .detail {
       width: 340px; flex: 0 0 340px; box-sizing: border-box;
       border-left: 1px solid var(--border); background: var(--surface);
-      display: flex; flex-direction: column; min-height: 0;
-      animation: detail-in .16s ease;
+      display: flex; flex-direction: column; min-height: 0; overflow: hidden;
     }
     .detail.hidden { display: none; }
-    @keyframes detail-in { from { opacity: 0; transform: translateX(10px); } }
-    .detail-head { display: flex; align-items: flex-start; gap: 10px; padding: 16px 16px 12px; border-bottom: 1px solid var(--border); }
-    .detail-accent { width: 4px; align-self: stretch; border-radius: 3px; flex: 0 0 auto; background: var(--accent); }
+    .detail-view { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+    .detail-head { display: flex; align-items: center; gap: 8px; padding: 14px 14px 12px; border-bottom: 1px solid var(--border); }
+    .detail-back { flex: 0 0 auto; width: 28px; height: 28px; color: var(--text-dim); border-radius: 7px; }
+    .detail-back:hover { background: var(--surface-2); color: var(--text); }
+    .detail-accent { width: 4px; align-self: stretch; min-height: 22px; border-radius: 3px; flex: 0 0 auto; background: var(--accent); }
     .detail-title { flex: 1; min-width: 0; margin: 0; font-size: 16px; font-weight: 650; line-height: 1.3; word-break: break-word; }
     .detail-x { flex: 0 0 auto; width: 26px; height: 26px; color: var(--text-faint); }
     .detail-x:hover { color: var(--text); }
@@ -467,6 +470,38 @@
     .detail-foot { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface-2); }
     .detail-foot .btn { flex: 0 0 auto; }
     .detail-foot .spacer { flex: 1; }
+
+    /* Mini month calendar — pinned at the top of the rail, navigates the calendar */
+    .mininav { flex: 0 0 auto; padding: 12px 14px 10px; border-bottom: 1px solid var(--border); }
+    .mininav-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .mininav-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 650; }
+    .mininav-btns { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+    .mininav-today { font-size: 11px; font-weight: 600; padding: 3px 9px; border: 1px solid var(--border-strong); border-radius: 6px;
+      background: var(--surface); color: var(--text-dim); cursor: pointer; }
+    .mininav-today:hover { background: var(--surface-2); color: var(--text); }
+    .mininav-arrow { width: 24px; height: 24px; color: var(--text-dim); border-radius: 6px; }
+    .mininav-arrow:hover { background: var(--surface-2); color: var(--text); }
+    .mininav-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+    .mininav-dow { text-align: center; font-size: 10px; font-weight: 600; color: var(--text-faint); padding: 2px 0 4px; }
+    .mininav-day { height: 26px; display: grid; place-items: center; font-size: 11.5px; border: none; background: none;
+      color: var(--text); cursor: pointer; border-radius: 6px; padding: 0; }
+    .mininav-day:hover { background: var(--surface-2); }
+    .mininav-day.other { color: var(--text-faint); }
+    .mininav-day.today { color: var(--accent); font-weight: 700; }
+    .mininav-day.sel { background: var(--accent); color: #fff; font-weight: 600; }
+    @media (prefers-color-scheme: dark) { .mininav-day.sel { color: #0b1f14; } }
+    .mininav-day.sel.today { color: #fff; }
+
+    /* Archive tab rows */
+    .archive-list { display: flex; flex-direction: column; gap: 1px; }
+    .archive-row { display: flex; align-items: center; gap: 6px; padding: 6px 4px 6px 8px; border-radius: 7px; }
+    .archive-row:hover { background: var(--surface-2); }
+    .archive-text { flex: 1; min-width: 0; font-size: 13.5px; color: var(--text-dim); text-decoration: line-through;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .arch-act { flex: 0 0 auto; width: 26px; height: 26px; color: var(--text-faint); border-radius: 6px; opacity: 0; transition: opacity .12s; }
+    .archive-row:hover .arch-act { opacity: 1; }
+    .arch-act:hover { background: var(--surface); color: var(--text); }
+    .arch-trash:hover { color: var(--danger); }
 
     /* Sidebar Notes button — pinned to the bottom of the sidebar */
     .sb-notes { position: sticky; bottom: 0; margin-top: 12px; width: 100%; display: flex; align-items: center; gap: 9px;
@@ -509,16 +544,22 @@
       .brand .tide-sub { display: none; }
       .topbar { gap: 8px; padding: 0 8px; }
     }
-    @media (max-width: 900px) {
-      .detail { width: 300px; flex-basis: 300px; }
+    /* Below the persistent-rail breakpoint the rail floats as an on-demand sheet
+       (out of flow → calendar stays full-width; no reflow when it opens). */
+    @media (max-width: 1023px) {
+      .detail {
+        position: fixed; top: 0; right: 0; bottom: 0; width: 360px; max-width: 88vw;
+        flex: none; z-index: 60; box-shadow: -10px 0 34px rgba(0,0,0,.30);
+        animation: detail-slide .18s ease;
+      }
+      @keyframes detail-slide { from { transform: translateX(24px); opacity: 0; } }
     }
     @media (max-width: 640px) {
       .sidebar { width: 190px; flex-basis: 190px; }
     }
     @media (max-width: 520px) {
       .sidebar { display: none; }
-      /* Detail panel becomes a full-screen sheet over the calendar */
-      .detail { position: fixed; inset: 0; width: auto; flex-basis: auto; z-index: 60; }
+      .detail { width: 100%; max-width: 100%; }  /* full-screen sheet on phones */
     }
   </style>
 </head>
@@ -695,6 +736,10 @@
     lock: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
     globe: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20"/></svg>',
     video: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m23 7-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>',
+    back: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>',
+    chevL: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
+    chevR: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
+    restore: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M3.5 13a9 9 0 1 0 2.6-7.6L3 8"/></svg>',
   };
 
   /* ====================================================================== *
@@ -1570,28 +1615,84 @@
     },
   };
 
-  /* ---- Detail panel infrastructure (right-hand Notion-style inspector) -- */
-  let activeDetail = null; // { key, flush }
-  function closeDetail() {
-    if (!activeDetail) return;
-    const { flush } = activeDetail;
-    activeDetail = null;
-    const root = $("#detailRoot");
-    root.classList.add("hidden");
-    root.replaceChildren();
-    if (flush) flush(); // fire-and-forget save of any pending note edit
+  /* ---- Right-hand rail: persistent inspector (month nav + notes + detail) */
+  // One persistent panel. On desktop it's always in flow (so opening something
+  // never reflows the calendar); on narrow screens it's an on-demand sheet.
+  // Content switches between the Notes home and a pushed detail (event / day
+  // note); detail views have a Back that returns to Notes.
+  const Panel = { shown: false, view: "notes", ctx: {}, notesTab: "scratch", month: null, flush: null };
+  const startOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
+
+  function panelFlush() { const f = Panel.flush; Panel.flush = null; if (f) { try { return f(); } catch (e) {} } }
+  function panelShow(view, ctx = {}) { panelFlush(); Panel.view = view; Panel.ctx = ctx; Panel.shown = true; panelRender(); }
+  function panelBack() { panelShow("notes", { tab: Panel.notesTab }); }
+  function panelHide() { panelFlush(); Panel.shown = false; panelRender(); } // collapse (desktop) / dismiss (mobile)
+  function panelActive() { return Panel.shown; }
+  function panelToggleNotes() {
+    if (Panel.shown && Panel.view === "notes") panelHide();
+    else panelShow("notes", { tab: Panel.notesTab });
   }
-  // Returns false if this same key was already open (caller should just bail —
-  // clicking the same event again toggles the panel shut).
-  function showDetail(key, buildFn) {
-    if (activeDetail && activeDetail.key === key) { closeDetail(); return; }
-    if (activeDetail && activeDetail.flush) activeDetail.flush();
-    const holder = { flush: null };
-    activeDetail = { key, get flush() { return holder.flush; } };
-    const node = buildFn(holder); // buildFn may set holder.flush
+
+  function panelRender() {
     const root = $("#detailRoot");
-    root.replaceChildren(node);
+    if (!root) return;
+    if (!Auth.isConnected() || !Panel.shown) { root.classList.add("hidden"); root.replaceChildren(); return; }
+    if (!Panel.month) Panel.month = startOfMonth(state.anchor || new Date());
+    const built = buildView(Panel.view, Panel.ctx); // { node, flush }
+    Panel.flush = built.flush || null;
     root.classList.remove("hidden");
+    root.replaceChildren(buildMonthNav(), built.node);
+  }
+  // On desktop the rail is persistent — show it by default once connected.
+  function panelInit() { if (matchMedia("(min-width: 1024px)").matches) Panel.shown = true; panelRender(); }
+
+  // Re-render just the mini-calendar (keeps the view content + its state intact).
+  function rebuildMiniNav(syncMonthToAnchor) {
+    const root = $("#detailRoot");
+    if (!root || root.classList.contains("hidden")) return;
+    if (syncMonthToAnchor) Panel.month = startOfMonth(state.anchor || new Date());
+    const old = root.querySelector(".mininav");
+    if (old) old.replaceWith(buildMonthNav());
+  }
+
+  function buildView(view, ctx) {
+    if (view === "event") return viewEvent(ctx.e);
+    if (view === "day") return viewDay(ctx.date);
+    if (view === "evtnote") return viewEvtNote(ctx.n);
+    return viewNotes(ctx.tab || Panel.notesTab);
+  }
+
+  // Mini month calendar — navigates the main calendar's anchor.
+  function buildMonthNav() {
+    const anchor = state.anchor || new Date(), today = new Date(), m = Panel.month;
+    const todayB = h("button", { class: "mininav-today", text: "Today", title: "Jump to today" });
+    todayB.addEventListener("click", () => { Panel.month = startOfMonth(today); goToDate(today); });
+    const prev = h("button", { class: "iconbtn mininav-arrow", "aria-label": "Previous month", html: ICON.chevL });
+    prev.addEventListener("click", () => { Panel.month = new Date(m.getFullYear(), m.getMonth() - 1, 1); rebuildMiniNav(false); });
+    const next = h("button", { class: "iconbtn mininav-arrow", "aria-label": "Next month", html: ICON.chevR });
+    next.addEventListener("click", () => { Panel.month = new Date(m.getFullYear(), m.getMonth() + 1, 1); rebuildMiniNav(false); });
+    const head = h("div", { class: "mininav-head" },
+      h("div", { class: "mininav-title", text: m.toLocaleDateString([], { month: "long", year: "numeric" }) }),
+      h("div", { class: "mininav-btns" }, todayB, prev, next));
+    const grid = h("div", { class: "mininav-grid" });
+    for (const w of ["S", "M", "T", "W", "T", "F", "S"]) grid.append(h("div", { class: "mininav-dow", text: w }));
+    const start = new Date(m); start.setDate(1 - m.getDay());
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start); d.setDate(start.getDate() + i);
+      const cls = "mininav-day" + (d.getMonth() !== m.getMonth() ? " other" : "")
+        + (sameDay(d, today) ? " today" : "") + (sameDay(d, anchor) ? " sel" : "");
+      const cell = h("button", { class: cls, text: String(d.getDate()) });
+      const dd = new Date(d);
+      cell.addEventListener("click", () => goToDate(dd));
+      grid.append(cell);
+    }
+    return h("div", { class: "mininav" }, head, grid);
+  }
+  function goToDate(d) {
+    state.anchor = startOfDay(d);
+    $("#calBody").dataset.scrolled = "";
+    loadEvents();
+    rebuildMiniNav(true);
   }
 
   // A self-saving note textarea. Debounced autosave + save-on-blur; returns a
@@ -1627,11 +1728,15 @@
     return h("span", { class: "note-scope" }, h("span", { html: icon }), h("span", { text }));
   }
 
+  // A pushed detail view: ← back to Notes, accent bar, title, ✕ to dismiss, body + optional footer.
   function detailShell({ accent, title, body, foot }) {
-    const x = h("button", { class: "iconbtn detail-x", "aria-label": "Close", html: ICON.close });
-    x.addEventListener("click", closeDetail);
-    return h("div", {},
+    const back = h("button", { class: "iconbtn detail-back", "aria-label": "Back to notes", title: "Back", html: ICON.back });
+    back.addEventListener("click", panelBack);
+    const x = h("button", { class: "iconbtn detail-x", "aria-label": "Hide panel", title: "Hide", html: ICON.close });
+    x.addEventListener("click", panelHide);
+    return h("div", { class: "detail-view" },
       h("div", { class: "detail-head" },
+        back,
         h("div", { class: "detail-accent", style: accent ? { background: accent } : {} }),
         h("h2", { class: "detail-title", text: title }),
         x,
@@ -1641,236 +1746,248 @@
     );
   }
 
-  function openEventDetail(e) {
-    const key = `evt:${e._calKey || e._calId}:${e.id}`;
-    showDetail(key, (holder) => {
-      const cal = state.calendars.find((c) => c.key === e._calKey) || state.calendars.find((c) => c.id === e._calId);
-      const writable = cal && (cal.accessRole === "owner" || cal.accessRole === "writer");
-      const { bg } = eventColors(e);
-      const when = isAllDay(e)
-        ? eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }) + " · all day"
-        : `${eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${fmtTime(eventStart(e))} – ${fmtTime(eventEnd(e))}`;
-      const joinLink = e.hangoutLink || firstMeetingLink(e.description, e.location);
+  function openEventDetail(e) { panelShow("event", { e }); }
+  function viewEvent(e) {
+    const cal = state.calendars.find((c) => c.key === e._calKey) || state.calendars.find((c) => c.id === e._calId);
+    const writable = cal && (cal.accessRole === "owner" || cal.accessRole === "writer");
+    const { bg } = eventColors(e);
+    const when = isAllDay(e)
+      ? eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }) + " · all day"
+      : `${eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${fmtTime(eventStart(e))} – ${fmtTime(eventEnd(e))}`;
+    const joinLink = e.hangoutLink || firstMeetingLink(e.description, e.location);
 
-      const body = h("div", {}, h("div", { class: "detail-when", text: when }));
-      if (joinLink) body.append(h("div", { class: "detail-row" },
-        h("a", { class: "joinrow", href: joinLink, target: "_blank", rel: "noopener noreferrer" },
-          h("span", { html: ICON.video }), h("span", { text: "Join meeting" }))));
-      if (cal) body.append(h("div", { class: "detail-row" },
-        h("div", { class: "lbl", text: "Calendar" }), h("div", { class: "val", text: cal.summary })));
-      if (e.location) body.append(h("div", { class: "detail-row" },
-        h("div", { class: "lbl", text: "Where" }), h("div", { class: "val" }, linkedText(e.location))));
+    const body = h("div", {}, h("div", { class: "detail-when", text: when }));
+    if (joinLink) body.append(h("div", { class: "detail-row" },
+      h("a", { class: "joinrow", href: joinLink, target: "_blank", rel: "noopener noreferrer" },
+        h("span", { html: ICON.video }), h("span", { text: "Join meeting" }))));
+    if (cal) body.append(h("div", { class: "detail-row" },
+      h("div", { class: "lbl", text: "Calendar" }), h("div", { class: "val", text: cal.summary })));
+    if (e.location) body.append(h("div", { class: "detail-row" },
+      h("div", { class: "lbl", text: "Where" }), h("div", { class: "val" }, linkedText(e.location))));
 
-      // Notes. Writable → the note IS the Google description (syncs to Google).
-      // Read-only → the Google description is shown read-only, plus a private note.
-      const notesRow = h("div", { class: "detail-row" }, h("div", { class: "lbl", text: "Notes" }));
-      body.append(notesRow);
+    const notesRow = h("div", { class: "detail-row" }, h("div", { class: "lbl", text: "Notes" }));
+    body.append(notesRow);
+    let flush = () => {};
+    const conn = Auth.byId(e._connId);
 
-      if (writable) {
-        const nf = noteField({
-          initial: e.description || "",
-          placeholder: "Add notes… (saved to this Google event)",
-          scopeChip: chip(ICON.globe, "Syncs to Google Calendar"),
-          onSave: async (val) => {
-            await Api.updateEvent(Auth.byId(e._connId), e._calId, e.id, { description: val });
-            e.description = val; // keep in-memory event fresh
-          },
-        });
-        holder.flush = nf.flush;
-        notesRow.append(nf.node);
-      } else {
-        if (e.description) notesRow.append(
-          h("div", { class: "detail-desc", style: { marginBottom: "10px" } }, linkedText(e.description)));
-        const conn = Auth.byId(e._connId);
-        const nf = noteField({
-          initial: "",
-          placeholder: "Add a private note…",
-          scopeChip: chip(ICON.lock, "Private note · read-only event"),
-          onSave: (val) => Notes.put(conn, "evt", e.id, val, e.summary || "(busy)"),
-        });
-        holder.flush = nf.flush;
-        notesRow.append(nf.node);
-        // Load any existing private note asynchronously.
-        Notes.get(conn, "evt", e.id).then((t) => { if (t && !nf.node.querySelector("textarea").value) nf.node.querySelector("textarea").value = t; })
-          .catch(() => {});
-      }
-
-      const foot = [];
-      const editBtn = h("button", { class: "btn", text: "Edit", disabled: !writable });
-      editBtn.addEventListener("click", () => { closeDetail(); openEventEditor({ start: eventStart(e), end: eventEnd(e), title: e.summary }, e); });
-      if (e.htmlLink) foot.push(h("a", { class: "btn ghost", href: e.htmlLink, target: "_blank", rel: "noopener", text: "Open in Google" }));
-      foot.push(h("span", { class: "spacer" }), editBtn);
-
-      return detailShell({ accent: bg, title: e.summary || "(busy)", body, foot });
-    });
-  }
-
-  function openDayNote(date) {
-    const conn = Auth.list()[0];
-    if (!conn) { toast("Connect an account to add day notes", "err"); return; }
-    const id = ymd(date);
-    const key = `day:${id}`;
-    showDetail(key, (holder) => {
-      const body = h("div", {},
-        h("div", { class: "detail-when", text: date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" }) }));
-      const notesRow = h("div", { class: "detail-row" }, h("div", { class: "lbl", text: "Day note" }));
+    if (writable) {
+      // The note IS the Google description (syncs to Google). Also mirror it to
+      // KV (label + text) so the event shows up in the "All notes" aggregation.
+      const nf = noteField({
+        initial: e.description || "",
+        placeholder: "Add notes… (saved to this Google event)",
+        scopeChip: chip(ICON.globe, "Syncs to Google Calendar"),
+        onSave: async (val) => {
+          await Api.updateEvent(conn, e._calId, e.id, { description: val });
+          e.description = val;
+          Notes.put(conn, "evt", e.id, val, e.summary || "(busy)").catch(() => {}); // aggregation index
+        },
+      });
+      flush = nf.flush;
+      notesRow.append(nf.node);
+    } else {
+      if (e.description) notesRow.append(
+        h("div", { class: "detail-desc", style: { marginBottom: "10px" } }, linkedText(e.description)));
       const nf = noteField({
         initial: "",
-        placeholder: "Notes for this day…",
-        scopeChip: chip(ICON.lock, "Private day note"),
-        onSave: (val) => Notes.put(conn, "day", id, val, date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" })),
+        placeholder: "Add a private note…",
+        scopeChip: chip(ICON.lock, "Private note · read-only event"),
+        onSave: (val) => Notes.put(conn, "evt", e.id, val, e.summary || "(busy)"),
       });
-      holder.flush = nf.flush;
+      flush = nf.flush;
       notesRow.append(nf.node);
-      body.append(notesRow);
-      Notes.get(conn, "day", id).then((t) => { const ta = nf.node.querySelector("textarea"); if (t && !ta.value) ta.value = t; }).catch(() => {});
-      return detailShell({ title: date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }), body, foot: [] });
+      Notes.get(conn, "evt", e.id).then((t) => { const ta = nf.node.querySelector("textarea"); if (t && !ta.value) ta.value = t; }).catch(() => {});
+    }
+
+    const foot = [];
+    const editBtn = h("button", { class: "btn", text: "Edit", disabled: !writable });
+    editBtn.addEventListener("click", () => openEventEditor({ start: eventStart(e), end: eventEnd(e), title: e.summary }, e));
+    if (e.htmlLink) foot.push(h("a", { class: "btn ghost", href: e.htmlLink, target: "_blank", rel: "noopener", text: "Open in Google" }));
+    foot.push(h("span", { class: "spacer" }), editBtn);
+
+    return { node: detailShell({ accent: bg, title: e.summary || "(busy)", body, foot }), flush };
+  }
+
+  function openDayNote(date) { panelShow("day", { date }); }
+  function viewDay(date) {
+    const conn = Auth.list()[0];
+    const id = ymd(date);
+    const body = h("div", {},
+      h("div", { class: "detail-when", text: date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" }) }));
+    const notesRow = h("div", { class: "detail-row" }, h("div", { class: "lbl", text: "Day note" }));
+    const nf = noteField({
+      initial: "",
+      placeholder: "Notes for this day…",
+      scopeChip: chip(ICON.lock, "Private day note"),
+      onSave: (val) => Notes.put(conn, "day", id, val, date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" })),
     });
+    notesRow.append(nf.node);
+    body.append(notesRow);
+    Notes.get(conn, "day", id).then((t) => { const ta = nf.node.querySelector("textarea"); if (t && !ta.value) ta.value = t; }).catch(() => {});
+    return { node: detailShell({ title: date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }), body, foot: [] }), flush: nf.flush };
   }
 
   const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-  /* ---- Notes panel — scratchpad + aggregation of saved notes ----------- */
+  /* ---- Notes home: Scratchpad · All notes · Archive -------------------- */
+  const SCRATCH_RETAIN_MS = 24 * 60 * 60 * 1000; // checked items linger ~1 day, then archive
   function openNotesPanel() {
+    if (!Auth.list()[0]) { toast("Connect an account to use Notes", "err"); return; }
+    panelShow("notes", { tab: Panel.notesTab });
+  }
+  function viewNotes(activeTab) {
+    Panel.notesTab = ["scratch", "all", "archive"].includes(activeTab) ? activeTab : "scratch";
     const conn = Auth.list()[0];
-    if (!conn) { toast("Connect an account to use Notes", "err"); return; }
-    showDetail("notes", (holder) => {
-      let tab = "scratch";
-      const bodyEl = h("div", { class: "detail-body" });
-      const scratchBtn = h("button", { class: "notes-tab", text: "Scratchpad" });
-      const allBtn = h("button", { class: "notes-tab", text: "All notes" });
-      const tabs = h("div", { class: "notes-tabs" }, scratchBtn, allBtn);
-      scratchBtn.addEventListener("click", () => setTab("scratch"));
-      allBtn.addEventListener("click", () => setTab("all"));
-      function setTab(t) {
-        tab = t;
-        scratchBtn.classList.toggle("active", t === "scratch");
-        allBtn.classList.toggle("active", t === "all");
-        t === "scratch" ? renderScratch() : renderAll();
-      }
+    const bodyEl = h("div", { class: "detail-body" });
+    const tabBar = h("div", { class: "notes-tabs" });
+    const btns = {};
+    for (const [k, lbl] of [["scratch", "Scratchpad"], ["all", "All notes"], ["archive", "Archive"]]) {
+      const b = h("button", { class: "notes-tab" + (k === Panel.notesTab ? " active" : ""), text: lbl });
+      b.addEventListener("click", () => { Panel.notesTab = k; for (const kk in btns) btns[kk].classList.toggle("active", kk === k); renderTab(k); });
+      btns[k] = b; tabBar.append(b);
+    }
+    const close = h("button", { class: "iconbtn detail-x", "aria-label": "Hide panel", title: "Hide", html: ICON.close });
+    close.addEventListener("click", panelHide);
+    const node = h("div", { class: "detail-view" },
+      h("div", { class: "detail-head" }, h("h2", { class: "detail-title", text: "Notes" }), h("span", { style: { flex: 1 } }), close),
+      tabBar, bodyEl);
 
-      /* --- Scratchpad: row-wise checklist in KV scope "list" ------------- */
-      let items = [];                    // [{id, text, done}]
-      const removeTimers = new Map();    // id -> timeout (checked → vanish)
-      const saveScratch = debounce(persistScratch, 500);
-      function persistScratch() {
-        return Notes.put(conn, "list", "main", JSON.stringify(items)).catch((e) => console.warn("scratch save", e));
-      }
-      holder.flush = () => { for (const t of removeTimers.values()) clearTimeout(t); return persistScratch(); };
+    let items = [];                 // active scratchpad items
+    let curFlush = () => {};
+    const saveMain = debounce(() => Notes.put(conn, "list", "main", JSON.stringify(items)).catch(() => {}), 500);
+    function persistMainNow() { return Notes.put(conn, "list", "main", JSON.stringify(items)).catch(() => {}); }
 
+    function renderTab(t) {
+      curFlush = () => {};
+      if (t === "archive") renderArchive();
+      else if (t === "all") renderAll();
+      else renderScratch();
+    }
+
+    /* Scratchpad */
+    async function archiveItems(expired) {
+      const t = await Notes.get(conn, "list", "archive").catch(() => "");
+      let arch = []; try { arch = t ? JSON.parse(t) : []; } catch {} if (!Array.isArray(arch)) arch = [];
+      const now = Date.now();
+      for (const it of expired) arch.push({ id: it.id, text: it.text, doneAt: it.doneAt || now, archivedAt: now });
+      if (arch.length > 500) arch = arch.slice(arch.length - 500);
+      await Notes.put(conn, "list", "archive", JSON.stringify(arch)).catch(() => {});
+    }
+    function renderScratch() {
+      bodyEl.replaceChildren(h("div", { class: "muted small", style: { padding: "6px 2px" }, text: "Loading…" }));
+      Notes.get(conn, "list", "main").then(async (t) => {
+        try { items = t ? JSON.parse(t) : []; } catch { items = []; } if (!Array.isArray(items)) items = [];
+        const now = Date.now();
+        const expired = items.filter((i) => i.done && i.doneAt && (now - i.doneAt) > SCRATCH_RETAIN_MS);
+        if (expired.length) { items = items.filter((i) => !expired.includes(i)); await archiveItems(expired); persistMainNow(); }
+        curFlush = persistMainNow;
+        paintScratch();
+      }).catch(() => bodyEl.replaceChildren(h("div", { class: "muted small", text: "Couldn't load." })));
+    }
+    function paintScratch() {
+      bodyEl.replaceChildren();
       const listEl = h("div", { class: "scratch-list" });
-      const addInput = h("input", { class: "scratch-add", type: "text", placeholder: "Add an item…", "aria-label": "Add item" });
       const emptyHint = h("div", { class: "muted small scratch-empty", text: "No items yet — type below and press Enter." });
-      addInput.addEventListener("keydown", (ev) => {
-        if (ev.key !== "Enter" || !addInput.value.trim()) return;
-        const it = { id: "i" + randString(8), text: addInput.value.trim(), done: false };
-        items.push(it);
-        addInput.value = "";
-        emptyHint.remove();
-        // insert new row above the done section
-        const firstDone = listEl.querySelector(".scratch-row.done");
-        listEl.insertBefore(rowFor(it), firstDone || null);
-        saveScratch();
-      });
-
-      function rowFor(it) {
-        const cb = h("input", { type: "checkbox", "aria-label": "Done" });
-        cb.checked = it.done;
+      const rowFor = (it) => {
+        const cb = h("input", { type: "checkbox", "aria-label": "Done" }); cb.checked = it.done;
         const txt = h("input", { class: "scratch-text", type: "text", value: it.text, "aria-label": "Item text" });
         const row = h("div", { class: "scratch-row" + (it.done ? " done" : "") }, cb, txt);
-        txt.addEventListener("input", () => { it.text = txt.value; saveScratch(); });
-        cb.addEventListener("change", () => {
-          it.done = cb.checked;
-          saveScratch();
-          if (it.done) {
-            row.classList.add("done");
-            listEl.appendChild(row);                 // sink below the unchecked items
-            const t = setTimeout(() => {
-              removeTimers.delete(it.id);
-              row.classList.add("removing");
-              setTimeout(() => {
-                row.remove();
-                items = items.filter((x) => x.id !== it.id);
-                persistScratch();
-                if (!items.length) listEl.appendChild(emptyHint);
-              }, 240);
-            }, 2400);
-            removeTimers.set(it.id, t);
-          } else {
-            const t = removeTimers.get(it.id); if (t) { clearTimeout(t); removeTimers.delete(it.id); }
-            row.classList.remove("done", "removing");
-            const firstDone = listEl.querySelector(".scratch-row.done");
-            listEl.insertBefore(row, firstDone || null); // float back up
-          }
-        });
+        txt.addEventListener("input", () => { it.text = txt.value; saveMain(); });
+        cb.addEventListener("change", () => { it.done = cb.checked; it.doneAt = cb.checked ? Date.now() : null; saveMain(); paintScratch(); });
         return row;
-      }
+      };
+      const undone = items.filter((i) => !i.done), done = items.filter((i) => i.done);
+      for (const it of [...undone, ...done]) listEl.append(rowFor(it));
+      if (!items.length) listEl.append(emptyHint);
+      const addInput = h("input", { class: "scratch-add", type: "text", placeholder: "Add an item…", "aria-label": "Add item" });
+      addInput.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter" || !addInput.value.trim()) return;
+        const it = { id: "i" + randString(8), text: addInput.value.trim(), done: false, doneAt: null };
+        items.push(it); addInput.value = ""; emptyHint.remove();
+        const firstDone = listEl.querySelector(".scratch-row.done");
+        listEl.insertBefore(rowFor(it), firstDone || null);
+        saveMain();
+      });
+      bodyEl.append(h("div", { class: "scratch" }, listEl, addInput));
+    }
 
-      function renderScratch() {
+    /* Archive: completed items, kept until trashed (or restored) */
+    function renderArchive() {
+      bodyEl.replaceChildren(h("div", { class: "muted small", style: { padding: "6px 2px" }, text: "Loading…" }));
+      Notes.get(conn, "list", "archive").then((t) => {
+        let arch = []; try { arch = t ? JSON.parse(t) : []; } catch {} if (!Array.isArray(arch)) arch = [];
+        arch.sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
         bodyEl.replaceChildren();
-        listEl.replaceChildren();
-        const undone = items.filter((i) => !i.done), done = items.filter((i) => i.done);
-        for (const it of [...undone, ...done]) listEl.append(rowFor(it));
-        if (!items.length) listEl.append(emptyHint);
-        bodyEl.append(h("div", { class: "scratch" }, listEl, addInput));
-      }
+        if (!arch.length) {
+          bodyEl.append(h("div", { class: "muted small", style: { padding: "8px 2px", lineHeight: "1.5" },
+            text: "Nothing archived yet. Completed scratchpad items land here after a day; trash to delete them for good." }));
+          return;
+        }
+        const saveArch = () => Notes.put(conn, "list", "archive", JSON.stringify(arch)).catch(() => {});
+        const wrap = h("div", { class: "archive-list" });
+        for (const it of arch) {
+          const restore = h("button", { class: "iconbtn arch-act", title: "Restore to scratchpad", "aria-label": "Restore", html: ICON.restore });
+          const trash = h("button", { class: "iconbtn arch-act arch-trash", title: "Delete permanently", "aria-label": "Delete", html: ICON.trash });
+          const row = h("div", { class: "archive-row" }, h("span", { class: "archive-text", text: it.text }), restore, trash);
+          trash.addEventListener("click", async () => { arch = arch.filter((x) => x.id !== it.id); await saveArch(); row.remove(); if (!arch.length) renderArchive(); });
+          restore.addEventListener("click", async () => {
+            arch = arch.filter((x) => x.id !== it.id); await saveArch();
+            const mt = await Notes.get(conn, "list", "main").catch(() => ""); let main = []; try { main = mt ? JSON.parse(mt) : []; } catch {} if (!Array.isArray(main)) main = [];
+            main.push({ id: it.id, text: it.text, done: false, doneAt: null });
+            await Notes.put(conn, "list", "main", JSON.stringify(main)).catch(() => {});
+            items = main; row.remove(); if (!arch.length) renderArchive();
+            toast("Restored to scratchpad");
+          });
+          wrap.append(row);
+        }
+        bodyEl.append(wrap);
+      }).catch(() => bodyEl.replaceChildren(h("div", { class: "muted small", text: "Couldn't load archive." })));
+    }
 
-      /* --- All notes: aggregate saved day + event notes ----------------- */
-      function renderAll() {
-        bodyEl.replaceChildren(h("div", { class: "muted small", style: { padding: "6px 2px" }, text: "Loading…" }));
-        Notes.list(conn).then((notes) => {
-          bodyEl.replaceChildren();
-          if (!notes.length) {
-            bodyEl.append(h("div", { class: "muted small", style: { padding: "8px 2px", lineHeight: "1.5" },
-              text: "No saved notes yet. Notes you add to a day, or to a read-only event, show up here." }));
-            return;
-          }
-          const listWrap = h("div", { class: "notelist" });
-          for (const n of notes) {
-            const label = n.label || n.id;
-            const when = n.updated ? new Date(n.updated).toLocaleDateString([], { month: "short", day: "numeric" }) : "";
-            const row = h("button", { class: "notelist-row" },
-              h("span", { class: "notelist-ic", html: n.scope === "day" ? ICON.note : ICON.lock }),
-              h("span", { class: "notelist-label", text: label }),
-              h("span", { class: "notelist-when", text: when }));
-            row.addEventListener("click", () => openAggregatedNote(n));
-            listWrap.append(row);
-          }
-          bodyEl.append(listWrap);
-        }).catch((e) => { console.warn("notes list", e); bodyEl.replaceChildren(h("div", { class: "muted small", text: "Couldn't load notes." })); });
-      }
+    /* All notes: aggregate saved day + event notes */
+    function renderAll() {
+      bodyEl.replaceChildren(h("div", { class: "muted small", style: { padding: "6px 2px" }, text: "Loading…" }));
+      Notes.list(conn).then((notes) => {
+        bodyEl.replaceChildren();
+        if (!notes.length) {
+          bodyEl.append(h("div", { class: "muted small", style: { padding: "8px 2px", lineHeight: "1.5" },
+            text: "No saved notes yet. Notes you add to a day or an event show up here." }));
+          return;
+        }
+        const listWrap = h("div", { class: "notelist" });
+        for (const n of notes) {
+          const when = n.updated ? new Date(n.updated).toLocaleDateString([], { month: "short", day: "numeric" }) : "";
+          const row = h("button", { class: "notelist-row" },
+            h("span", { class: "notelist-ic", html: n.scope === "day" ? ICON.note : ICON.video }),
+            h("span", { class: "notelist-label", text: n.label || n.id }),
+            h("span", { class: "notelist-when", text: when }));
+          row.addEventListener("click", () => openAggregatedNote(n));
+          listWrap.append(row);
+        }
+        bodyEl.append(listWrap);
+      }).catch((e) => { console.warn("notes list", e); bodyEl.replaceChildren(h("div", { class: "muted small", text: "Couldn't load notes." })); });
+    }
 
-      const x = h("button", { class: "iconbtn detail-x", "aria-label": "Close", html: ICON.close });
-      x.addEventListener("click", closeDetail);
-      const node = h("div", {},
-        h("div", { class: "detail-head" }, h("div", { class: "detail-accent" }), h("h2", { class: "detail-title", text: "Notes" }), x),
-        tabs, bodyEl);
-
-      setTab("scratch");
-      Notes.get(conn, "list", "main").then((t) => {
-        try { items = t ? JSON.parse(t) : []; } catch { items = []; }
-        if (!Array.isArray(items)) items = [];
-        if (tab === "scratch") renderScratch();
-      }).catch(() => {});
-      return node;
-    });
+    renderTab(Panel.notesTab);
+    return { node, flush: () => curFlush() };
   }
 
   // Open a saved note from the aggregation list. Day → the day panel; event →
   // its detail if it's in view, else a minimal read-only view of the stored note.
   function openAggregatedNote(n) {
-    if (n.scope === "day") { openDayNote(new Date(n.id + "T00:00:00")); return; }
+    if (n.scope === "day") { panelShow("day", { date: new Date(n.id + "T00:00:00") }); return; }
     const ev = state.events.find((e) => e.id === n.id);
     if (ev) { openEventDetail(ev); return; }
+    panelShow("evtnote", { n });
+  }
+  function viewEvtNote(n) {
     const conn = Auth.list()[0];
-    showDetail(`evtnote:${n.id}`, () => {
-      const body = h("div", {}, h("div", { class: "detail-when", text: "Saved note" }));
-      const row = h("div", { class: "detail-row" }, h("div", { class: "lbl", text: "Note" }),
-        h("div", { class: "detail-desc", text: "Loading…" }));
-      body.append(row);
-      Notes.get(conn, "evt", n.id).then((t) => { row.querySelector(".detail-desc").textContent = t || "(empty)"; }).catch(() => {});
-      return detailShell({ title: n.label || "Event note", body, foot: [] });
-    });
+    const body = h("div", {}, h("div", { class: "detail-when", text: "Saved note" }));
+    const row = h("div", { class: "detail-row" }, h("div", { class: "lbl", text: "Note" }),
+      h("div", { class: "detail-desc", text: "Loading…" }));
+    body.append(row);
+    Notes.get(conn, "evt", n.id).then((t) => { row.querySelector(".detail-desc").textContent = t || "(empty)"; }).catch(() => {});
+    return { node: detailShell({ title: n.label || "Event note", body, foot: [] }), flush: () => {} };
   }
 
   /* ====================================================================== *
@@ -2488,7 +2605,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     // Notes button — pinned to the bottom of the sidebar.
     const notesBtn = h("button", { class: "sb-notes", title: "Notes — scratchpad & saved notes" },
       h("span", { class: "sb-notes-ic", html: ICON.note }), h("span", { text: "Notes" }));
-    notesBtn.addEventListener("click", () => openNotesPanel());
+    notesBtn.addEventListener("click", () => panelToggleNotes());
     el.append(notesBtn);
   }
 
@@ -2536,13 +2653,13 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     // global: command bar + escape always available
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if (Auth.isConnected()) openCommandBar(); return; }
     if (e.key === "Escape" && activeModal) { e.preventDefault(); closeModal(); return; }
-    // Escape closes the detail panel too — before the isTyping guard so it works
-    // while the cursor is in the note textarea (flush-saves on close).
-    if (e.key === "Escape" && activeDetail) { e.preventDefault(); closeDetail(); return; }
+    // Escape backs out of a pushed detail view to Notes — before the isTyping
+    // guard so it works while the cursor is in a note field (flush-saves first).
+    if (e.key === "Escape" && Panel.shown && Panel.view !== "notes") { e.preventDefault(); panelBack(); return; }
     if (activeModal || isTyping(document.activeElement) || e.metaKey || e.ctrlKey || e.altKey) return;
     if (!Auth.isConnected()) return;
     switch (e.key) {
-      case "t": case "T": state.anchor = startOfDay(new Date()); $("#calBody").dataset.scrolled = ""; loadEvents(); break;
+      case "t": case "T": state.anchor = startOfDay(new Date()); $("#calBody").dataset.scrolled = ""; loadEvents(); rebuildMiniNav(true); break;
       case "w": case "W": setView("week"); break;
       case "d": case "D": setView("day"); break;
       case "n": case "N": openEventEditor(); break;
@@ -2559,11 +2676,13 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     state.view = v;
     $("#calBody").dataset.scrolled = "";
     loadEvents();
+    rebuildMiniNav(true);
   }
   function stepPeriod(dir) {
     const span = state.view === "day" ? 1 : 7;
     state.anchor = addDays(state.anchor, dir * span);
     loadEvents();
+    rebuildMiniNav(true);
   }
 
   /* ====================================================================== *
@@ -2571,7 +2690,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
    * ====================================================================== */
   $("#weekViewBtn").addEventListener("click", () => setView("week"));
   $("#dayViewBtn").addEventListener("click", () => setView("day"));
-  $("#todayBtn").addEventListener("click", () => { state.anchor = startOfDay(new Date()); $("#calBody").dataset.scrolled = ""; loadEvents(); });
+  $("#todayBtn").addEventListener("click", () => { state.anchor = startOfDay(new Date()); $("#calBody").dataset.scrolled = ""; loadEvents(); rebuildMiniNav(true); });
   $("#prevBtn").addEventListener("click", () => stepPeriod(-1));
   $("#nextBtn").addEventListener("click", () => stepPeriod(1));
   $("#newEventBtn").addEventListener("click", () => openEventEditor());
@@ -2602,6 +2721,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     updateAcctChip();
     await ensureCalendars();
     await loadEvents();
+    panelInit(); // show the persistent right rail (desktop) with month nav + notes
   }
 
   async function boot() {
