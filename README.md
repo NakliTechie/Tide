@@ -10,21 +10,30 @@ with **no secret and no backend**. There is no build step.
 
 ---
 
-## Sovereignty posture (non-negotiable)
+## Data posture
 
-- **No server round-trip for your calendar data or tokens. Ever.** Tide is a
-  static file; the OAuth grant is strictly between your browser and Google.
-- **No client secret.** Tide uses the GIS token client, which needs no secret —
-  so nothing sensitive is shipped to visitors and nothing lands in this repo.
-- **No telemetry, no analytics.**
-- **Access tokens live only in memory in this tab.** They are never written to
-  disk. The only thing persisted (in IndexedDB, the "Vault") is *which accounts*
-  you connected — their email/id, so the sidebar can offer a one-click reconnect
-  — plus your prefs, per-calendar colours, and a small event cache.
-- Different people on the same URL are fully isolated, *because there is no
-  server*: Person A's tokens are physically unreachable from Person B's browser.
-- **Disconnect erases everything local.** Account & settings → *Disconnect &
-  erase all local data* clears the entire IndexedDB.
+Tide keeps as little of your data as possible, and most of it never touches
+Tide's servers. See the full [Privacy Policy](public/privacy.html) (live at
+`/privacy`).
+
+- **Your calendar data never touches Tide's servers.** Events are fetched
+  directly between your browser and Google's API. Tide's Worker never sees,
+  processes, or stores your calendar contents.
+- **Your sign-in tokens stay in your browser.** Tide is a Cloudflare Worker, and
+  the one-time OAuth code→token exchange runs server-side so Google's app secret
+  is never exposed to visitors — but the resulting access/refresh tokens are
+  returned to and stored only in your browser (IndexedDB, the "Vault"), never
+  retained by the Worker.
+- **Notes and preferences are the one thing Tide stores.** Your scratchpad, day
+  notes, private event notes, calendar colours, and calendar selections live in
+  Cloudflare KV, namespaced to your Google account id so they follow you across
+  devices. Nothing else server-side.
+- **Per-user isolation is enforced server-side** by verifying each request's
+  Google identity — one user cannot reach another's notes.
+- **No telemetry, no analytics, no ads, no data sold or shared.**
+- **Disconnect erases local data.** Account & settings → *Disconnect & erase all
+  local data* clears the entire IndexedDB (tokens included). Server-side notes are
+  deleted when you clear them, or on request (see the privacy policy).
 
 ---
 

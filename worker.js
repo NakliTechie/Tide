@@ -185,6 +185,11 @@ export default {
     if (url.pathname === "/api/refresh") return handleRefresh(request, env);
     if (url.pathname === "/api/note") return handleNote(request, env);
     if (url.pathname === "/api/notes") return handleNotesList(request, env);
+    // Clean URL for the privacy policy (served for the OAuth consent screen).
+    if (url.pathname === "/privacy" && env.ASSETS) {
+      const u = new URL(request.url); u.pathname = "/privacy.html";
+      return env.ASSETS.fetch(new Request(u, request));
+    }
     // Everything else is a static asset. With `main` + `assets`, matched assets
     // are served before the Worker runs; this fallback only catches unmatched
     // non-API paths.

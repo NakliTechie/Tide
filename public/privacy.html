@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'self'" />
+  <title>Tide — Privacy Policy</title>
+  <style>
+    :root {
+      --bg: #0f1011; --surface: #17181a; --border: #26282b;
+      --text: #e7e8ea; --dim: #a9adb2; --faint: #7d8288; --accent: #4ade9b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 48px 22px 80px; }
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 34px; }
+    .brand svg { color: var(--accent); }
+    .brand span { font-size: 19px; font-weight: 650; letter-spacing: .01em; }
+    h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.01em; }
+    .updated { color: var(--faint); font-size: 13px; margin-bottom: 30px; }
+    h2 { font-size: 16px; margin: 30px 0 8px; }
+    p, li { color: var(--dim); }
+    a { color: var(--accent); text-underline-offset: 2px; }
+    ul { padding-left: 20px; }
+    li { margin: 5px 0; }
+    strong { color: var(--text); font-weight: 620; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; margin: 14px 0; }
+    .muted { color: var(--faint); font-size: 13px; }
+    hr { border: 0; border-top: 1px solid var(--border); margin: 34px 0; }
+    footer { color: var(--faint); font-size: 13px; }
+    footer a { color: var(--dim); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2 12c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/>
+        <path d="M2 17c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/>
+        <path d="M2 7c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/>
+      </svg>
+      <span>Tide</span>
+    </div>
+
+    <h1>Privacy Policy</h1>
+    <div class="updated">Last updated: 6 July 2026</div>
+
+    <p>Tide is a fast, keyboard-first calendar client for Google Calendar, available at
+      <a href="https://tide.naklitechie.com">tide.naklitechie.com</a>. This policy explains
+      what data Tide accesses, where it goes, and what it does not do. Tide is deliberately
+      minimal: it keeps as little of your data as possible, and most of your data never
+      touches Tide's servers at all.</p>
+
+    <h2>1. What Tide accesses</h2>
+    <p>When you connect a Google account, Tide requests only the scopes it needs to be a
+      calendar client:</p>
+    <ul>
+      <li><strong>Google Calendar</strong> (view and edit events —
+        <code>calendar.events</code>, <code>calendar.readonly</code>): to show your calendars
+        and events and to let you create or edit events.</li>
+      <li><strong>Basic profile</strong> (<code>openid</code>, <code>email</code>): your email,
+        name, and profile picture, used to label the connected account and to associate your
+        Tide notes and preferences with you.</li>
+    </ul>
+    <p>You can connect more than one Google account; each is requested with the same scopes.</p>
+
+    <h2>2. Where your data lives</h2>
+    <div class="card">
+      <p style="margin-top:0"><strong>Your Google sign-in tokens stay in your browser.</strong>
+        Sign-in uses Google's standard OAuth flow. The one-time exchange of the sign-in code for
+        tokens is performed by Tide's server so that Google's application secret is never exposed
+        to your browser — but the resulting access and refresh tokens are returned to your browser
+        and stored only there (in your browser's local IndexedDB storage). Tide's server does not
+        retain them.</p>
+    </div>
+    <div class="card">
+      <p style="margin-top:0"><strong>Your calendar contents never touch Tide's servers.</strong>
+        Calendar and event data is fetched directly between your browser and Google's API. Tide's
+        servers do not receive, process, or store your events, attendees, or calendar contents.</p>
+    </div>
+    <div class="card">
+      <p style="margin-top:0"><strong>Notes and preferences are stored by Tide.</strong>
+        Notes you write inside Tide (the scratchpad, per-day notes, and private notes you add to
+        events) and your display preferences (calendar colours, which calendars are shown) are
+        stored in Cloudflare Workers KV, associated with your Google account identifier so that
+        they are available to you across your devices. These are the only user data Tide stores on
+        its servers. Notes on events you can edit in Google are also written into the Google event
+        itself, at your action.</p>
+    </div>
+
+    <h2>3. What Tide does not do</h2>
+    <ul>
+      <li>No advertising, and no selling or renting of your data.</li>
+      <li>No sharing of your data with third parties, except the infrastructure providers below
+        that are strictly necessary to run the service.</li>
+      <li>No analytics or tracking of your browsing.</li>
+      <li>No use of your data to train AI or machine-learning models.</li>
+    </ul>
+
+    <h2>4. Google API Services — Limited Use</h2>
+    <p>Tide's use and transfer of information received from Google APIs adheres to the
+      <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>,
+      including the Limited Use requirements. Tide uses Google user data only to provide and improve
+      the calendar features you see, and does not transfer or use it for advertising, credit, or
+      any purpose beyond those user-facing features.</p>
+
+    <h2>5. Infrastructure &amp; sub-processors</h2>
+    <ul>
+      <li><strong>Google LLC</strong> — the calendar data and sign-in you connect.</li>
+      <li><strong>Cloudflare, Inc.</strong> — hosts the Tide application and the storage used for
+        your notes and preferences.</li>
+    </ul>
+
+    <h2>6. Data retention and deletion</h2>
+    <ul>
+      <li><strong>Tokens &amp; local data:</strong> using Tide's "Disconnect &amp; erase all local
+        data" action clears all connected accounts and tokens from your browser.</li>
+      <li><strong>Notes:</strong> clearing a note in Tide deletes it from Tide's storage.</li>
+      <li><strong>Full deletion:</strong> to delete all of your Tide-stored notes and preferences,
+        contact us at the address below and we will remove them.</li>
+      <li><strong>Revoking access:</strong> you can revoke Tide's access to your Google account at
+        any time from your
+        <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account permissions page</a>.</li>
+    </ul>
+
+    <h2>7. Security</h2>
+    <p>All traffic is served over HTTPS. Sign-in tokens are kept in your browser rather than on
+      Tide's servers, and stored notes and preferences are isolated per Google account so that one
+      user cannot access another's data.</p>
+
+    <h2>8. Changes to this policy</h2>
+    <p>If this policy changes, the "last updated" date above will change. Material changes will be
+      reflected here before they take effect.</p>
+
+    <h2>9. Contact</h2>
+    <p>Questions, or a request to delete your data: <a href="mailto:chirag.patnaik@gmail.com">chirag.patnaik@gmail.com</a>.</p>
+
+    <hr />
+    <footer>
+      <a href="https://tide.naklitechie.com">&larr; Back to Tide</a>
+    </footer>
+  </div>
+</body>
+</html>
