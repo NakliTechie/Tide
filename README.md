@@ -203,23 +203,31 @@ reloads. To also revoke Tide's access on Google's side, visit your
   allowlist (Google endpoints, optional BYOK hosts, the pinned Transformers.js
   CDN, `localhost` for the bridge), `frame-src` limited to `accounts.google.com`
   (for the GIS iframe), and no inline event handlers.
-- The single inline module is authorized by its **SHA-256 hash** in `script-src`
-  rather than `'unsafe-inline'`. **If you edit the script, you must regenerate
-  the hash** and replace it in the CSP meta:
+- The single inline module in `public/index.html` is authorized by its
+  **SHA-256 hash** in `script-src` rather than `'unsafe-inline'`. **If you edit
+  the script, you must regenerate the hash**, or the browser silently refuses to
+  run the whole app (blank connect screen, no console error):
 
   ```sh
-  # hash the exact bytes between <script type="module"> and </script>
-  python3 - <<'PY'
-  import hashlib, base64
-  d = open('index.html','rb').read()
-  i = d.index(b'<script type="module">') + len(b'<script type="module">')
-  j = d.index(b'</script>', i)
-  print('sha256-' + base64.b64encode(hashlib.sha256(d[i:j]).digest()).decode())
-  PY
+  node scripts/rehash-csp.mjs
   ```
 
-  (Tide loads as a single static file with no build step; this is the one manual
-  step the no-bundler constraint imposes.)
+  The deploy runs this automatically (`predeploy`), so a normal `npm run deploy`
+  can never ship a stale hash.
+
+---
+
+## Deploys
+
+Tide is a Cloudflare Worker (`worker.js` for the `/api/*` token + notes
+endpoints; static app served from `public/` via the `ASSETS` binding).
+
+- **Manual:** `npm run deploy` — rehashes the CSP, then `wrangler deploy`.
+- **CI:** pushes to `main` auto-deploy via **Cloudflare Workers Builds**
+  (build `npm ci`, deploy `npm run deploy`); other branches get preview builds.
+
+Secrets (`GOOGLE_CLIENT_SECRET`) and bindings (`NOTES` KV) live on the Worker and
+persist across deploys — they are not part of the uploaded bundle.
 
 ---
 
