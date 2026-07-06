@@ -1,235 +1,208 @@
 # Tide
 
-A single-file calendar page. Your Google Calendar — or **several** of them —
-rendered fast and keyboard-first, with nothing in between: no app to install, no
-account, no server. **Your calendar tokens never leave this browser.**
+A fast, keyboard-first calendar for Google Calendar — **one or several accounts
+merged into a single grid**, hosted at **[tide.naklitechie.com](https://tide.naklitechie.com)**.
 
-Tide is one `index.html`: HTML + inline CSS + one inline ES module. It talks
-straight to Google using **Google Identity Services (GIS)** — a public client
-with **no secret and no backend**. There is no build step.
+No app to install. Sign in with Google and go. Your Google tokens stay in your
+browser; the only thing Tide keeps on its side are your notes and display
+preferences, namespaced to your account so they follow you across devices.
+
+Tide runs as a **Cloudflare Worker**: a static single-page app served from
+`public/`, plus a tiny API (`worker.js`) that handles the Google token exchange
+(so the OAuth secret never reaches the browser) and stores notes/preferences in
+Workers KV.
 
 ---
 
-## Data posture
+## Using Tide
+
+1. Open **[tide.naklitechie.com](https://tide.naklitechie.com)**.
+2. Click **Connect Google Calendar** and choose your account.
+3. The app is pending Google verification, so you'll see a one-time *"Google
+   hasn't verified this app"* screen — click **Continue**.
+4. Grant calendar access. You're in. Add more accounts any time with **+ Add
+   account**; their calendars merge into one grid.
+
+You stay signed in across reloads and across devices (sign in again on a new
+device; your notes are already there).
+
+---
+
+## Data &amp; privacy posture
 
 Tide keeps as little of your data as possible, and most of it never touches
-Tide's servers. See the full [Privacy Policy](public/privacy.html) (live at
-`/privacy`).
+Tide's servers. Full [Privacy Policy](public/privacy.html) — live at `/privacy`.
 
 - **Your calendar data never touches Tide's servers.** Events are fetched
-  directly between your browser and Google's API. Tide's Worker never sees,
-  processes, or stores your calendar contents.
-- **Your sign-in tokens stay in your browser.** Tide is a Cloudflare Worker, and
-  the one-time OAuth code→token exchange runs server-side so Google's app secret
-  is never exposed to visitors — but the resulting access/refresh tokens are
-  returned to and stored only in your browser (IndexedDB, the "Vault"), never
-  retained by the Worker.
+  directly between your browser and Google's API. The Worker never sees or stores
+  your calendar contents.
+- **Your sign-in tokens stay in your browser.** The one-time OAuth code→token
+  exchange runs in the Worker so Google's app secret is never exposed to
+  visitors — but the resulting access/refresh tokens are returned to and stored
+  only in your browser (IndexedDB, the "Vault"), never retained by the Worker.
 - **Notes and preferences are the one thing Tide stores.** Your scratchpad, day
   notes, private event notes, calendar colours, and calendar selections live in
-  Cloudflare KV, namespaced to your Google account id so they follow you across
-  devices. Nothing else server-side.
-- **Per-user isolation is enforced server-side** by verifying each request's
-  Google identity — one user cannot reach another's notes.
+  Cloudflare KV, keyed to your Google account id so they follow you across
+  devices. Per-user isolation is enforced server-side by verifying each request's
+  Google identity.
 - **No telemetry, no analytics, no ads, no data sold or shared.**
-- **Disconnect erases local data.** Account & settings → *Disconnect & erase all
-  local data* clears the entire IndexedDB (tokens included). Server-side notes are
-  deleted when you clear them, or on request (see the privacy policy).
+- **Delete anything.** Clearing a note removes it from storage; *Account &amp;
+  settings → Disconnect &amp; erase all local data* wipes tokens from your browser;
+  full server-side deletion on request (see the privacy policy).
 
 ---
 
 ## What it does
 
 - **Multiple Google accounts at once.** Connect as many as you like; their
-  calendars merge into one grid. A left sidebar groups calendars per account,
-  each with a colour dot + visibility toggle, plus **+ Add account** and a
-  per-account remove/reconnect.
+  calendars merge into one grid, grouped per account in a left sidebar with a
+  colour dot + visibility toggle each.
 - **Per-calendar colours** from a curated 10-colour palette, auto-assigned for
-  distinctness and **fully customisable** — click any colour dot to pick a
-  palette swatch or a custom colour. Choices persist per calendar.
+  distinctness and fully customisable — click a colour dot to pick a swatch or a
+  custom colour. Choices persist per calendar.
 - **Week** (default) and **Day** views: time grid, current-time line, all-day
-  row, auto-contrast event text. On load the grid **auto-scrolls to centre the
-  current time**.
+  row, auto-contrast event text, auto-scroll to the current time.
+- **A right-hand rail** with a month-calendar navigator and a **Notes** home; open
+  an event or day note in the rail without the calendar reflowing.
+- **Create / edit / delete** events — click a slot to create, click an event to
+  open it in the rail. Writes route to the correct account automatically.
 - **Command bar** (`⌘K` / `Ctrl+K`): type an event in plain words → it parses →
-  **you confirm** → it's written to Google. A deterministic parser is the floor,
-  so it works with no model and offline-ish; an optional LLM ladder
-  (BYOK → local bridge → WebGPU) sharpens parsing when available.
-- **Create / edit / delete** single events; click a slot to create, click an
-  event to open it. Writes route to the correct account automatically.
-- **Reminders** ride Google's own `reminders` field (so your phone is notified
-  whether or not this tab is open). Optional best-effort in-tab nudges while a
-  Tide tab is alive.
+  **you confirm** → it's written to Google.
+- **Reminders** ride Google's own `reminders` field, so your phone is notified
+  whether or not a Tide tab is open.
 - **Agent face** — `window.tide.agent` exposes `listEvents`, `createEvent`,
-  `findSlots` across all connected accounts (see below).
+  `findSlots` across all connected accounts.
 
 ---
 
-## Auth model & the reconnect tradeoff (read this)
+## Notes
 
-Tide uses the **GIS token client** (`google.accounts.oauth2.initTokenClient`).
-This is the only way to talk to Google Calendar from a pure static page with
-**no client secret and no backend** — Google's "Web application" OAuth client
-*requires* a secret for the classic authorization-code exchange, which would
-defeat the no-secret posture on a shared public URL.
+Tide has a lightweight notes layer, stored server-side per user (in KV) so it
+syncs across your devices:
 
-The tradeoff: GIS issues **short-lived access tokens and no refresh token**.
+- **Scratchpad** — a quick checklist in the sidebar's Notes panel. Tick an item
+  and it strikes through, sinks to the bottom, and auto-moves to **Archive** after
+  a day; archived items stay until you trash them (or restore them).
+- **Day notes** — a private note per calendar day (the ✎ on a day header).
+- **Event notes** — a note on any event. On events you can edit, the note is
+  written into the Google event's description (so it syncs to Google); on
+  read-only events it's kept private in Tide.
+- **All notes** — one tab that aggregates your day and event notes.
 
-- **Within a session** everything is seamless.
-- **On a cold page load** (and roughly hourly, when the token expires) Tide tries
-  a silent re-grant. Silent renewal relies on third-party cookies to
-  `accounts.google.com`, which modern browsers often block — so you may see a
-  one-click **Reconnect** in the sidebar. Reconnect uses the lightest prompt, so
-  for already-granted scopes it just re-picks the account (no re-consent).
-- This friction **eases substantially once the app is published and verified** —
-  apps in *Testing* mode get short grants and aggressive re-consent by design.
+Tide still doesn't transcribe or summarize meetings — that's a separate job.
+These notes are jottings tied to your calendar, not a document editor.
 
 ---
 
-## One-time Google setup (≈5 minutes)
+## Auth model
 
-Tide needs a **public OAuth Client ID** of your own. It is meant to live in
-source (it is *not* a secret — there is no client secret).
+Tide uses the standard **OAuth 2.0 authorization-code flow with PKCE**. The
+browser starts the flow and receives a `?code`; the Worker exchanges that code
+(and later refreshes tokens) at Google's token endpoint using the app's client
+secret, which lives only in the Worker. Access + refresh tokens are returned to
+the browser and stored in IndexedDB. On reload, Tide silently mints a fresh
+access token via `/api/refresh` — no reconnect churn.
 
-1. In the [Google Cloud Console](https://console.cloud.google.com/), create (or
-   pick) a project. **APIs & Services → Library →** enable the **Google Calendar
-   API**.
-2. **Google Auth Platform (OAuth consent screen):**
-   - App name, support email, **audience: External**.
-   - **Scopes:** add `https://www.googleapis.com/auth/calendar.events` and
-     `https://www.googleapis.com/auth/calendar.readonly` (plus `openid` / `email`,
-     which Tide uses only to show which account is connected). These are
-     **sensitive** — see *Multi-user* below.
-   - While in **Testing**, add every Google account that should be able to
-     connect as a **test user** (cap ~100).
-3. **Clients → Create client → Web application.** Add your page's origins as
-   **Authorized JavaScript origins** (the GIS token client uses origins, **not**
-   redirect URIs):
-   - Production: e.g. `https://tide.example.com`
-   - Local dev: `http://localhost:8788`
-   (Registering redirect URIs too does no harm, but GIS doesn't use them.)
-4. Copy the **Client ID** into Tide. Either:
-   - edit `index.html` and set `GOOGLE_CLIENT_ID`, **or**
-   - append `?client_id=YOUR_ID.apps.googleusercontent.com` to the URL, **or**
-   - run `localStorage.setItem('tide.clientId', 'YOUR_ID...')` once in the console.
-
-No client secret is ever used or needed.
-
-### Multi-user / "can anyone connect?"
-
-The Client ID is shared by everyone who visits your URL; isolation is per
-browser. While the consent screen is in **Testing**, only accounts you've added
-as test users can connect. To let arbitrary visitors connect, **publish and
-verify** the consent screen — that verification (not the client registration) is
-what stands between "I can connect" and "anyone can connect", and it also smooths
-the reconnect behaviour above. Because Tide ships **no secret**, it is safe to
-serve to arbitrary visitors on a public URL.
+Scopes requested: `calendar.events` and `calendar.readonly` (to read and write
+your events), plus `openid` / `email` (to label the connected account and key
+your notes). These calendar scopes are **sensitive**, which is why the app goes
+through Google's OAuth verification.
 
 ---
 
-## Run it
+## Command bar (optional model ladder)
 
-Tide is a static file — serve it with anything, at an origin you registered in
-step 3.
+The deterministic parser is always the floor — the command bar works with no
+model at all. To sharpen natural-language parsing, Tide will use, in order when
+available:
 
-```sh
-# any static server on port 8788 (must match a registered JS origin)
-python3 -m http.server 8788
-# then open http://localhost:8788/
-```
-
-### Self-host on Cloudflare Pages
-
-```sh
-# deploy just the page (don't upload working notes)
-mkdir -p .deploy && cp index.html .deploy/
-npx wrangler pages deploy .deploy --project-name tide
-```
-
-Then attach your custom domain to the Pages project and register that origin as
-an **Authorized JavaScript origin** in Google Cloud (step 3).
-
-### Browser support
-
-Target is latest Chromium (Chrome/Edge): WebGPU + IndexedDB. Safari/Firefox
-degrade gracefully — no WebGPU, so the command bar uses the deterministic parser
-(or BYOK). **The calendar view works fully everywhere.**
-
----
-
-## Command-bar model (optional)
-
-The deterministic parser is always the floor. To sharpen natural-language
-parsing, Tide consumes an Edge-First ladder, tried in this order when available:
-
-- **BYOK:** add an Anthropic or OpenAI-compatible API key under *Account &
-  settings → Command-bar model*. The key is stored only in this browser's
-  IndexedDB and is sent only to the provider you choose.
-- **Local bridge:** if `nakli-local-bridge` / Ollama is running on
-  `http://localhost:11434`, Tide will try it (override with
-  `localStorage.setItem('tide.bridge', 'http://host:port')`).
-- **WebGPU (Transformers.js):** off by default (heavy first load). Enable with
+- **BYOK:** an Anthropic or OpenAI-compatible API key set under *Account &amp;
+  settings → Command-bar model*. Stored only in your browser, sent only to the
+  provider you choose.
+- **Local bridge:** an Ollama-compatible endpoint at `http://localhost:11434`
+  (override with `localStorage.setItem('tide.bridge', 'http://host:port')`).
+- **WebGPU (Transformers.js):** off by default; enable with
   `localStorage.setItem('tide.l2', 'on')` on a WebGPU browser.
 
 If none are present, the deterministic parser handles it.
 
 ---
 
-## Agent face
+## Architecture
 
-Tide *is* a schedule API an agent can drive, across every connected account:
-
-```js
-await tide.agent.listEvents({ from: '2026-06-09', to: '2026-06-16' });
-await tide.agent.createEvent({ title: 'Lunch with Sam', start: '2026-06-10T13:00', end: '2026-06-10T14:00' });
-await tide.agent.findSlots({ durationMin: 30, window: { from: '2026-06-09', to: '2026-06-13' } });
-tide.accounts();   // which Google accounts are connected
+```
+public/index.html    the single-page app (HTML + inline CSS + one inline ES module)
+public/privacy.html  privacy policy (served at /privacy)
+worker.js            the Worker: /api/token, /api/refresh, /api/note(s), asset fallback
+wrangler.jsonc       Worker config: ASSETS binding, NOTES KV, GOOGLE_CLIENT_ID var, route
+scripts/rehash-csp.mjs  regenerates the CSP hash for the inline script (runs on deploy)
 ```
 
-Same Google clients as the UI; pure functions over the primitives.
+- **Static app** is served via the Worker's `ASSETS` binding.
+- **`/api/token` + `/api/refresh`** proxy Google's token endpoint using
+  `GOOGLE_CLIENT_SECRET` (a Worker secret).
+- **`/api/note` + `/api/notes`** store and list per-user notes in the `NOTES` KV
+  namespace, authorising each request by verifying the caller's Google token and
+  keying data by the resulting account id.
+- **No calendar data flows through the Worker** — the browser calls Google's
+  Calendar API directly.
 
 ---
 
-## Composition, not welding
+## Self-hosting &amp; development
 
-Tide shows your week and captures events — that is the whole job. It
-deliberately does **not** transcribe, take notes, or summarize. When you want
-meeting capture, Tide emits the event and **Steno** records it: two small tools
-over shared primitives, never one bloated app.
+Tide is open to run yourself. You'll need your own Google OAuth client and a
+Cloudflare account.
 
----
+**1. Google Cloud** — create a project, enable the **Google Calendar API**, and
+under **Google Auth Platform**:
+- Configure the consent screen (app name, support email, audience **External**,
+  privacy-policy URL); add the calendar + `openid`/`email` scopes.
+- **Clients → Create client → Web application.** Because the token exchange is
+  server-side, this needs a **client secret** and **Authorized redirect URIs**
+  (Tide redirects back to its own origin/path):
+  - `http://localhost:8788/` for local dev
+  - `https://your-domain/` for production
 
-## Clearing all local data
+**2. Configure** — set the **public Client ID** in both `wrangler.jsonc`
+(`vars.GOOGLE_CLIENT_ID`) and the `GOOGLE_CLIENT_ID` constant in
+`public/index.html`. Put the **secret** in `.dev.vars` for local dev:
 
-*Account & settings → Disconnect & erase all local data* wipes Tide's entire
-IndexedDB (connection identities, prefs, colours, BYOK key, event cache) and
-reloads. To also revoke Tide's access on Google's side, visit your
-[Google Account permissions](https://myaccount.google.com/permissions).
+```
+GOOGLE_CLIENT_SECRET=your-secret
+```
 
----
+**3. KV** — create the notes namespace and put its id in `wrangler.jsonc`:
 
-## Security notes
+```sh
+npx wrangler kv namespace create NOTES
+```
 
-- **Strict CSP** via a `<meta>` tag: `default-src 'none'`, a tight `connect-src`
-  allowlist (Google endpoints, optional BYOK hosts, the pinned Transformers.js
-  CDN, `localhost` for the bridge), `frame-src` limited to `accounts.google.com`
-  (for the GIS iframe), and no inline event handlers.
-- The single inline module in `public/index.html` is authorized by its
-  **SHA-256 hash** in `script-src` rather than `'unsafe-inline'`. **If you edit
-  the script, you must regenerate the hash**, or the browser silently refuses to
-  run the whole app (blank connect screen, no console error):
+**4. Run** — install and start the dev server (load it at **localhost:8788**, the
+registered redirect origin — not 127.0.0.1):
 
-  ```sh
-  node scripts/rehash-csp.mjs
-  ```
+```sh
+npm install
+npm run dev          # wrangler dev on :8788
+```
 
-  The deploy runs this automatically (`predeploy`), so a normal `npm run deploy`
-  can never ship a stale hash.
+**5. Deploy** — set the production secret once, then deploy (or just push, see
+below):
+
+```sh
+npx wrangler secret put GOOGLE_CLIENT_SECRET
+npm run deploy       # rehashes the CSP, then wrangler deploy
+```
+
+### Browser support
+
+Target is latest Chromium (Chrome/Edge). Safari/Firefox work for the calendar and
+notes; the command bar's WebGPU model tier is Chromium-only (the deterministic
+parser and BYOK work everywhere).
 
 ---
 
 ## Deploys
-
-Tide is a Cloudflare Worker (`worker.js` for the `/api/*` token + notes
-endpoints; static app served from `public/` via the `ASSETS` binding).
 
 - **Manual:** `npm run deploy` — rehashes the CSP, then `wrangler deploy`.
 - **CI:** pushes to `main` auto-deploy via **Cloudflare Workers Builds**
@@ -240,6 +213,27 @@ persist across deploys — they are not part of the uploaded bundle.
 
 ---
 
+## Security notes
+
+- **Strict CSP** via a `<meta>` tag: `default-src 'none'` with a tight
+  `connect-src` allowlist (Google endpoints, same-origin `/api`, optional BYOK
+  hosts and the pinned Transformers.js CDN), and no inline event handlers.
+- The single inline module in `public/index.html` is authorised by its
+  **SHA-256 hash** in `script-src` rather than `'unsafe-inline'`. **If you edit
+  the script you must regenerate the hash**, or the browser silently refuses to
+  run the whole app (blank connect screen, no console error):
+
+  ```sh
+  node scripts/rehash-csp.mjs
+  ```
+
+  The deploy runs this automatically (`predeploy`), so `npm run deploy` (and CI)
+  can never ship a stale hash.
+- The Google **client secret** exists only as a Worker secret; per-user note
+  access is scoped by verified Google identity.
+
+---
+
 ## License
 
-See repository. Tide stores nothing of yours anywhere but on your machine.
+See repository.

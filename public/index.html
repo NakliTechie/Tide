@@ -277,6 +277,10 @@
     .connect-card h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: -.02em; }
     .connect-card p { color: var(--text-dim); margin: 0 auto 22px; max-width: 36ch; }
     .connect-card .fine { font-size: 12px; color: var(--text-faint); margin-top: 18px; }
+    .connect-card .connect-links { font-size: 12px; margin: 14px 0 0; display: flex; gap: 8px; justify-content: center; align-items: center; }
+    .connect-card .connect-links a { color: var(--text-dim); text-decoration: none; }
+    .connect-card .connect-links a:hover { color: var(--text); text-decoration: underline; }
+    .connect-card .connect-links span { color: var(--text-faint); }
     .connect-card .warn {
       text-align: left; background: var(--danger-soft); color: var(--text);
       border: 1px solid var(--border); border-radius: var(--radius-sm);
@@ -643,6 +647,11 @@
       <div id="configWarn" class="warn hidden"></div>
       <button class="btn primary" id="connectBtn" style="font-size:15px;padding:10px 18px">Connect Google Calendar</button>
       <p class="fine">Sign in with Google. A tiny token-exchange endpoint keeps Google's secret off your browser; your calendar data never touches it. Tokens are stored only in this browser. Connect as many accounts as you like.</p>
+      <p class="connect-links">
+        <a href="/privacy">Privacy Policy</a>
+        <span aria-hidden="true">·</span>
+        <a href="/terms">Terms</a>
+      </p>
     </div>
   </div>
 
