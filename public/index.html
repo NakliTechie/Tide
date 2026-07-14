@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-tO+04nb8HbFEpCpfrCwafVj1CGcJpi3r7m2MJkQY8+0=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-hJcy5TGsO01Xx8q0MrN5T0sIdeWqOAUGnNLTlHlqZN4=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -1595,6 +1595,19 @@
     for (const t of texts) { if (!t) continue; const m = t.match(MEETING_RE); if (m) return m[0].replace(/[.,;:!?'")\]]+$/, ""); }
     return null;
   }
+  // Google URLs: pin the link to the account whose calendar the event lives on
+  // (?authuser=<email>), so multi-signed-in browsers open it as the right identity.
+  function withAuthUser(url, e) {
+    const conn = e && e._connId ? Auth.byId(e._connId) : null;
+    if (!url || !conn || !conn.email) return url;
+    try {
+      const u = new URL(url);
+      if (u.hostname !== "google.com" && !u.hostname.endsWith(".google.com")) return url;
+      u.searchParams.set("authuser", conn.email);
+      return u.toString();
+    } catch (_) { return url; }
+  }
+  function joinLinkFor(e) { return withAuthUser(e.hangoutLink || firstMeetingLink(e.description, e.location), e); }
   function linkedText(text) {
     const frag = document.createDocumentFragment();
     let last = 0;
@@ -1774,7 +1787,7 @@
     const when = isAllDay(e)
       ? eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }) + " · all day"
       : `${eventStart(e).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${fmtTime(eventStart(e))} – ${fmtTime(eventEnd(e))}`;
-    const joinLink = e.hangoutLink || firstMeetingLink(e.description, e.location);
+    const joinLink = joinLinkFor(e);
 
     const body = h("div", {}, h("div", { class: "detail-when", text: when }));
     if (joinLink) body.append(h("div", { class: "detail-row" },
@@ -1822,7 +1835,7 @@
     const foot = [];
     const editBtn = h("button", { class: "btn", text: "Edit", disabled: !writable });
     editBtn.addEventListener("click", () => openEventEditor({ start: eventStart(e), end: eventEnd(e), title: e.summary }, e));
-    if (e.htmlLink) foot.push(h("a", { class: "btn ghost", href: e.htmlLink, target: "_blank", rel: "noopener", text: "Open in Google" }));
+    if (e.htmlLink) foot.push(h("a", { class: "btn ghost", href: withAuthUser(e.htmlLink, e), target: "_blank", rel: "noopener", text: "Open in Google" }));
     foot.push(h("span", { class: "spacer" }), editBtn);
 
     return { node: detailShell({ accent: bg, title: e.summary || "(busy)", body, foot }), flush };
@@ -2431,7 +2444,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     const dismiss = () => { card.remove(); Alerts.pending = Math.max(0, Alerts.pending - 1); updateAlertTitle(); };
     const openBtn = h("button", { text: "Open" });
     openBtn.addEventListener("click", () => { openEventDetail(e); dismiss(); });
-    const joinLink = e.hangoutLink || firstMeetingLink(e.description, e.location);
+    const joinLink = joinLinkFor(e);
     let joinA = null;
     if (joinLink) {
       joinA = h("a", { href: joinLink, target: "_blank", rel: "noopener noreferrer", text: "Join" });
