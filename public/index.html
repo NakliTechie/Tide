@@ -22,7 +22,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-K3PIUoXOBSkHEOW9j+gZy9F2UMYAkqDfP5VfQWTqcf8=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-BJSYD4ix2ifzYvM2QnCXd3IZUi4TOu+eZ3/RkKaTZrY=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -358,6 +358,13 @@
     @keyframes rise { from { transform: translateY(8px); opacity: 0; } }
     .toast.err { background: var(--danger); color: #fff; }
     .toast button { background: transparent; border: 0; color: inherit; text-decoration: underline; cursor: pointer; font-weight: 600; }
+    .toast.alert {
+      background: var(--bg); color: var(--text); border: 2px solid var(--text);
+      flex-direction: column; align-items: stretch; gap: 6px; padding: 12px 16px; min-width: 260px;
+    }
+    .toast.alert .alert-title { font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .toast.alert .alert-when { font-size: 12.5px; opacity: .75; }
+    .toast.alert .alert-actions { display: flex; gap: 14px; justify-content: flex-end; }
 
     .banner {
       background: #b8860020; color: var(--text); border-bottom: 1px solid var(--border);
@@ -1201,7 +1208,7 @@
       state.loading = false;
       render();
       renderSidebar();
-      scheduleNudges();
+      checkAlerts();
     }
   }
 
@@ -2385,26 +2392,64 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
   }
 
   /* ====================================================================== *
-   *  In-tab nudges (best-effort only; Google reminders are the guarantee)  *
+   *  In-tab alerts (best-effort only; Google reminders are the guarantee)  *
+   *  A 30s checker loop (not one-shot timers, which background tabs        *
+   *  throttle) fires an in-app card + OS notification when an event is due *
    * ====================================================================== */
-  let nudgeTimers = [];
-  function scheduleNudges() {
-    nudgeTimers.forEach(clearTimeout); nudgeTimers = [];
-    if (!prefs.inTabNudges) return;
-    if (!("Notification" in window)) return;
+  const Alerts = { fired: new Set(), snoozed: new Map(), pending: 0, baseTitle: document.title };
+  const alertKey = (e) => (e._connId || "") + "::" + (e._calId || "") + "::" + (e.id || e.summary || "") + "::" + eventStart(e).toISOString();
+  function checkAlerts() {
+    if (!prefs.inTabNudges || !Auth.isConnected()) return;
     const now = Date.now();
+    const lead = (prefs.reminderMinutes || 10) * 60000;
+    const GRACE = 30 * 60000; // still alert if we wake up late, but not for long-past events
     for (const e of state.events) {
       if (isAllDay(e)) continue;
-      const lead = (prefs.reminderMinutes || 10) * 60000;
-      const fireAt = eventStart(e).getTime() - lead;
-      if (fireAt > now && fireAt - now < 6 * 3600000) {
-        const id = setTimeout(() => {
-          if (Notification.permission === "granted") {
-            new Notification("Upcoming: " + (e.summary || "event"), { body: fmtTime(eventStart(e)) + " — in-tab nudge (Google delivers the real reminder)" });
-          }
-        }, fireAt - now);
-        nudgeTimers.push(id);
+      const key = alertKey(e);
+      if (Alerts.fired.has(key)) continue;
+      const fireAt = Alerts.snoozed.get(key) ?? eventStart(e).getTime() - lead;
+      if (fireAt <= now && now - fireAt < GRACE) {
+        Alerts.fired.add(key); Alerts.snoozed.delete(key);
+        fireAlert(e, key);
       }
+    }
+  }
+  function updateAlertTitle() {
+    document.title = Alerts.pending > 0 ? "⏰ " + Alerts.baseTitle : Alerts.baseTitle;
+  }
+  function fireAlert(e, key) {
+    const start = eventStart(e);
+    const mins = Math.round((start.getTime() - Date.now()) / 60000);
+    const when = fmtTime(start) + (mins > 0 ? " — in " + mins + " min" : mins === 0 ? " — starting now" : " — started " + -mins + " min ago");
+
+    // In-app card: persists until dismissed or snoozed
+    const card = h("div", { class: "toast alert", role: "alert" });
+    const dismiss = () => { card.remove(); Alerts.pending = Math.max(0, Alerts.pending - 1); updateAlertTitle(); };
+    const openBtn = h("button", { text: "Open" });
+    openBtn.addEventListener("click", () => { openEventDetail(e); dismiss(); });
+    const snoozeBtn = h("button", { text: "Snooze 5m" });
+    snoozeBtn.addEventListener("click", () => { Alerts.fired.delete(key); Alerts.snoozed.set(key, Date.now() + 5 * 60000); dismiss(); });
+    const dismissBtn = h("button", { text: "Dismiss" });
+    dismissBtn.addEventListener("click", dismiss);
+    const actions = h("div", { class: "alert-actions" }, openBtn, snoozeBtn, dismissBtn);
+    card.append(
+      h("div", { class: "alert-title", text: "⏰ " + (e.summary || "(busy)") }),
+      h("div", { class: "alert-when", text: when }),
+      actions);
+    if ("Notification" in window && Notification.permission === "default") {
+      const enable = h("button", { text: "Enable browser alerts" });
+      enable.addEventListener("click", () => { Notification.requestPermission(); enable.remove(); });
+      actions.prepend(enable);
+    }
+    $("#toasts").append(card);
+    Alerts.pending++; updateAlertTitle();
+
+    // OS notification (works even when the tab is in the background)
+    if ("Notification" in window && Notification.permission === "granted") {
+      try {
+        const n = new Notification("Upcoming: " + (e.summary || "event"), { body: when + " (Google delivers the real reminder)", tag: key });
+        n.addEventListener("click", () => { window.focus(); openEventDetail(e); dismiss(); n.close(); });
+      } catch (_) {} // some platforms throw on page-scope Notification
     }
   }
 
@@ -2451,7 +2496,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
         h("label", { class: "field" }, h("span", { text: "Working hours start" }), whStart),
         h("label", { class: "field" }, h("span", { text: "Working hours end" }), whEnd)),
       h("label", { class: "field" }, h("span", { text: "Default reminder (minutes before)" }), remDefault),
-      h("label", { class: "chk" }, nudgeChk, h("span", { text: "In-tab nudges while a Tide tab is open (best-effort)" })),
+      h("label", { class: "chk" }, nudgeChk, h("span", { text: "Alerts while a Tide tab is open — in-app card + browser notification (best-effort)" })),
     ));
 
     // (Calendar visibility is controlled from the left sidebar, grouped per account.)
@@ -2713,6 +2758,15 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
 
   // refresh the now-line every minute
   setInterval(() => { if (Auth.isConnected() && !activeModal) { const nl = $(".nowline"); if (nl) { const now = new Date(); nl.style.top = ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_H + "px"; } } }, 60000);
+
+  // alert checker: every 30s, plus immediately when a throttled tab wakes up
+  setInterval(checkAlerts, 30000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkAlerts(); });
+
+  // long-lived tabs: refresh events every 10 min so alerts cover newly added ones
+  setInterval(() => {
+    if (Auth.isConnected() && !activeModal && !state.loading && document.visibilityState === "visible" && navigator.onLine) loadEvents();
+  }, 10 * 60000);
 
   /* ====================================================================== *
    *  Boot                                                                  *
