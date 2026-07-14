@@ -8,3 +8,4 @@ plan/
 .deploy/
 .dev.vars
 .wrangler/
+.claude/
