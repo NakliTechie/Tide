@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Tide</title>
   <meta name="description" content="A keyboard-first calendar over your Google Calendar, with multi-account support. No account to create, no telemetry. Your calendar data never leaves your browser." />
+  <link rel="icon" href="/icons/tide.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <meta name="theme-color" content="#2f6f4f" />
   <meta name="color-scheme" content="light dark" />
   <!--
     Content-Security-Policy.
@@ -22,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-UoqntEdtlnB7tUGvGG3cE7MaGOUot0sOuKdxqVhe4p0=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-tO+04nb8HbFEpCpfrCwafVj1CGcJpi3r7m2MJkQY8+0=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -2765,6 +2768,34 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
 
   // refresh the now-line every minute
   setInterval(() => { if (Auth.isConnected() && !activeModal) { const nl = $(".nowline"); if (nl) { const now = new Date(); nl.style.top = ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_H + "px"; } } }, 60000);
+
+  // dynamic date favicon: the tide tile with today's day number (calendar-app style).
+  // Falls back to the static /icons/tide.svg link if canvas drawing fails.
+  let faviconDay = null;
+  function drawDateFavicon() {
+    const day = new Date().getDate();
+    if (day === faviconDay) return;
+    try {
+      const c = document.createElement("canvas"); c.width = c.height = 64;
+      const x = c.getContext("2d");
+      const g = x.createLinearGradient(0, 0, 0, 64);
+      g.addColorStop(0, "#3a8862"); g.addColorStop(1, "#22523c");
+      x.beginPath();
+      if (x.roundRect) x.roundRect(0, 0, 64, 64, 14); else x.rect(0, 0, 64, 64);
+      x.fillStyle = g; x.fill();
+      x.fillStyle = "#fff"; x.textAlign = "center"; x.textBaseline = "middle";
+      x.font = "700 34px -apple-system, system-ui, sans-serif";
+      x.fillText(String(day), 32, 27);
+      x.strokeStyle = "#fff"; x.lineWidth = 6; x.lineCap = "round";
+      x.stroke(new Path2D("M12 51c5 0 5-7 10-7s5 7 10 7 5-7 10-7 5 7 10 7"));
+      let l = document.querySelector('link[rel="icon"]');
+      if (!l) { l = document.createElement("link"); l.rel = "icon"; document.head.append(l); }
+      l.type = "image/png"; l.href = c.toDataURL("image/png");
+      faviconDay = day;
+    } catch (_) {} // static SVG favicon remains
+  }
+  drawDateFavicon();
+  setInterval(drawDateFavicon, 60000); // rolls over at local midnight
 
   // alert checker: every 30s, plus immediately when a throttled tab wakes up
   setInterval(checkAlerts, 30000);
