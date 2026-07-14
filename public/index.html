@@ -22,7 +22,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-BJSYD4ix2ifzYvM2QnCXd3IZUi4TOu+eZ3/RkKaTZrY=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-UoqntEdtlnB7tUGvGG3cE7MaGOUot0sOuKdxqVhe4p0=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -364,7 +364,8 @@
     }
     .toast.alert .alert-title { font-weight: 700; display: flex; align-items: center; gap: 8px; }
     .toast.alert .alert-when { font-size: 12.5px; opacity: .75; }
-    .toast.alert .alert-actions { display: flex; gap: 14px; justify-content: flex-end; }
+    .toast.alert .alert-actions { display: flex; gap: 14px; justify-content: flex-end; align-items: center; }
+    .toast.alert .alert-actions a { color: inherit; font-weight: 700; text-decoration: underline; }
 
     .banner {
       background: #b8860020; color: var(--text); border-bottom: 1px solid var(--border);
@@ -2427,11 +2428,17 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     const dismiss = () => { card.remove(); Alerts.pending = Math.max(0, Alerts.pending - 1); updateAlertTitle(); };
     const openBtn = h("button", { text: "Open" });
     openBtn.addEventListener("click", () => { openEventDetail(e); dismiss(); });
+    const joinLink = e.hangoutLink || firstMeetingLink(e.description, e.location);
+    let joinA = null;
+    if (joinLink) {
+      joinA = h("a", { href: joinLink, target: "_blank", rel: "noopener noreferrer", text: "Join" });
+      joinA.addEventListener("click", dismiss);
+    }
     const snoozeBtn = h("button", { text: "Snooze 5m" });
     snoozeBtn.addEventListener("click", () => { Alerts.fired.delete(key); Alerts.snoozed.set(key, Date.now() + 5 * 60000); dismiss(); });
     const dismissBtn = h("button", { text: "Dismiss" });
     dismissBtn.addEventListener("click", dismiss);
-    const actions = h("div", { class: "alert-actions" }, openBtn, snoozeBtn, dismissBtn);
+    const actions = h("div", { class: "alert-actions" }, ...(joinA ? [joinA] : []), openBtn, snoozeBtn, dismissBtn);
     card.append(
       h("div", { class: "alert-title", text: "⏰ " + (e.summary || "(busy)") }),
       h("div", { class: "alert-when", text: when }),
