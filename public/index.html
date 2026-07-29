@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-hJcy5TGsO01Xx8q0MrN5T0sIdeWqOAUGnNLTlHlqZN4=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-L3Al3+HTwmlsIR5Et1P0WgdAc8yfb68rk1pnBUO7ko4=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -1057,6 +1057,7 @@
     selectedCalendars: null, // null = use each calendar's own "selected"
     calColors: {},          // { "connId::calId": "#hex" } — auto-assigned, user-overridable
     inTabNudges: true,
+    alertSound: true,       // ring an audible chime at meeting start (t=0)
   };
   let prefs = { ...DEFAULT_PREFS };
   async function loadPrefs() {
@@ -2415,29 +2416,87 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
    * ====================================================================== */
   const Alerts = { fired: new Set(), snoozed: new Map(), pending: 0, baseTitle: document.title };
   const alertKey = (e) => (e._connId || "") + "::" + (e._calId || "") + "::" + (e.id || e.summary || "") + "::" + eventStart(e).toISOString();
+
+  /* Audible chime — synthesized via Web Audio (no asset, CSP-clean: nothing is
+     fetched). Browsers start an AudioContext suspended until a user gesture, so
+     we lazily create + resume it and also warm it on the first pointer/key. */
+  let _actx = null;
+  function audioCtx() {
+    try {
+      if (!_actx) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; _actx = new AC(); }
+      if (_actx.state === "suspended") _actx.resume().catch(() => {});
+      return _actx;
+    } catch (_) { return null; }
+  }
+  function unlockAudio() {
+    const c = audioCtx();
+    if (c && c.state === "running") {
+      removeEventListener("pointerdown", unlockAudio); removeEventListener("keydown", unlockAudio);
+    }
+  }
+  addEventListener("pointerdown", unlockAudio); addEventListener("keydown", unlockAudio);
+  function playChime() {
+    const c = audioCtx();
+    if (!c) return;
+    // Two-tone "ding-dong" bell, ~0.7s, soft attack + exponential decay.
+    const seq = [{ f: 880, t: 0 }, { f: 659.25, t: 0.16 }];
+    for (const n of seq) {
+      const osc = c.createOscillator(), gain = c.createGain();
+      osc.type = "sine"; osc.frequency.value = n.f;
+      const t0 = c.currentTime + n.t;
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.3, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.55);
+      osc.connect(gain).connect(c.destination);
+      osc.start(t0); osc.stop(t0 + 0.6);
+    }
+  }
+
   function checkAlerts() {
     if (!prefs.inTabNudges || !Auth.isConnected()) return;
     const now = Date.now();
-    const lead = (prefs.reminderMinutes || 10) * 60000;
-    const GRACE = 30 * 60000; // still alert if we wake up late, but not for long-past events
+    const lead = (prefs.reminderMinutes ?? 10) * 60000; // ?? not ||: reminder = 0 means "no heads-up, just the start ring"
+    const GRACE = 30 * 60000;       // pre-reminder: still nudge if we wake up late, but not for long-past events
+    const START_GRACE = 2 * 60000;  // start-ring: only ring near the actual start, never for a long-past meeting
     for (const e of state.events) {
       if (isAllDay(e)) continue;
-      const key = alertKey(e);
-      if (Alerts.fired.has(key)) continue;
-      const fireAt = Alerts.snoozed.get(key) ?? eventStart(e).getTime() - lead;
-      if (fireAt <= now && now - fireAt < GRACE) {
-        Alerts.fired.add(key); Alerts.snoozed.delete(key);
-        fireAlert(e, key);
+      const startMs = eventStart(e).getTime();
+
+      // Pre-reminder — silent visual heads-up, `lead` minutes before start (unchanged).
+      // Skipped when lead is 0 so it can't double-fire with the start ring.
+      if (lead > 0) {
+        const key = alertKey(e);
+        if (!Alerts.fired.has(key)) {
+          const fireAt = Alerts.snoozed.get(key) ?? startMs - lead;
+          if (fireAt <= now && now - fireAt < GRACE) {
+            Alerts.fired.add(key); Alerts.snoozed.delete(key);
+            fireAlert(e, key, {});
+          }
+        }
+      }
+
+      // Start ring — fires AT the meeting time (t=0) and plays the chime.
+      const skey = "start::" + alertKey(e);
+      if (!Alerts.fired.has(skey)) {
+        const fireAt = Alerts.snoozed.get(skey) ?? startMs;
+        if (fireAt <= now && now - fireAt < START_GRACE) {
+          Alerts.fired.add(skey); Alerts.snoozed.delete(skey);
+          fireAlert(e, skey, { atStart: true });
+        }
       }
     }
   }
   function updateAlertTitle() {
     document.title = Alerts.pending > 0 ? "⏰ " + Alerts.baseTitle : Alerts.baseTitle;
   }
-  function fireAlert(e, key) {
+  function fireAlert(e, key, opts = {}) {
+    const atStart = !!opts.atStart;
     const start = eventStart(e);
     const mins = Math.round((start.getTime() - Date.now()) / 60000);
     const when = fmtTime(start) + (mins > 0 ? " — in " + mins + " min" : mins === 0 ? " — starting now" : " — started " + -mins + " min ago");
+
+    // Ring an audible chime when the meeting is actually starting.
+    if (atStart && prefs.alertSound) playChime();
 
     // In-app card: persists until dismissed or snoozed
     const card = h("div", { class: "toast alert", role: "alert" });
@@ -2456,7 +2515,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     dismissBtn.addEventListener("click", dismiss);
     const actions = h("div", { class: "alert-actions" }, ...(joinA ? [joinA] : []), openBtn, snoozeBtn, dismissBtn);
     card.append(
-      h("div", { class: "alert-title", text: "⏰ " + (e.summary || "(busy)") }),
+      h("div", { class: "alert-title", text: (atStart ? "🔔 " : "⏰ ") + (e.summary || "(busy)") }),
       h("div", { class: "alert-when", text: when }),
       actions);
     if ("Notification" in window && Notification.permission === "default") {
@@ -2470,7 +2529,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     // OS notification (works even when the tab is in the background)
     if ("Notification" in window && Notification.permission === "granted") {
       try {
-        const n = new Notification("Upcoming: " + (e.summary || "event"), { body: when + " (Google delivers the real reminder)", tag: key });
+        const n = new Notification((atStart ? "Starting now: " : "Upcoming: ") + (e.summary || "event"), { body: when + " (Google delivers the real reminder)", tag: key });
         n.addEventListener("click", () => { window.focus(); openEventDetail(e); dismiss(); n.close(); });
       } catch (_) {} // some platforms throw on page-scope Notification
     }
@@ -2509,6 +2568,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     const whEnd = h("input", { type: "number", min: "1", max: "24", value: String(prefs.workingHours.end) });
     const remDefault = h("input", { type: "number", min: "0", max: "40320", value: String(prefs.reminderMinutes) });
     const nudgeChk = h("input", { type: "checkbox" }); nudgeChk.checked = prefs.inTabNudges;
+    const soundChk = h("input", { type: "checkbox" }); soundChk.checked = prefs.alertSound;
 
     body.append(h("div", { class: "help-section" },
       h("h3", { text: "Preferences" }),
@@ -2520,7 +2580,9 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
         h("label", { class: "field" }, h("span", { text: "Working hours end" }), whEnd)),
       h("label", { class: "field" }, h("span", { text: "Default reminder (minutes before)" }), remDefault),
       h("label", { class: "chk" }, nudgeChk, h("span", { text: "Alerts while a Tide tab is open — in-app card + browser notification (best-effort)" })),
+      h("label", { class: "chk" }, soundChk, h("span", { text: "Ring a sound when a meeting starts (plays a preview when you tick it)" })),
     ));
+    soundChk.addEventListener("change", () => { if (soundChk.checked) playChime(); });
 
     // (Calendar visibility is controlled from the left sidebar, grouped per account.)
 
@@ -2558,6 +2620,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
       prefs.workingHours = { start: clampNum(whStart.value, 0, 23, 9), end: clampNum(whEnd.value, 1, 24, 18) };
       prefs.reminderMinutes = clampNum(remDefault.value, 0, 40320, 10);
       prefs.inTabNudges = nudgeChk.checked;
+      prefs.alertSound = soundChk.checked;
       prefs.selectedCalendars = [...state.selected];
       await savePrefs();
       const key = keyIn.value.trim();
