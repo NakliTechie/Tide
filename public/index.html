@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-rYXqx0rr8fPqpjslEyTO981OKLjYRh/Ia5UzxSsz12U=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-XKWRLFAL7VUnfSVgPrkV8O8tkklpcB3U7AGa4jwMnmo=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -620,6 +620,10 @@
 
       <button class="iconbtn" id="helpBtn" title="Help (?)" aria-label="Help">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+      </button>
+
+      <button class="iconbtn" id="settingsBtn" title="Settings (,)" aria-label="Settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
 
       <button class="acct" id="acctBtn" title="Account &amp; settings">
@@ -2043,13 +2047,22 @@
         confirmBtn),
     );
 
+    // Command palette: a few exact keywords short-circuit event parsing.
+    const COMMANDS = [
+      { keys: ["settings", "preferences", "prefs"], label: "⚙ Open Settings", run: openSettings },
+      { keys: ["help"], label: "? Open Help", run: openHelp },
+    ];
+    const matchCommand = (text) => { const k = text.trim().toLowerCase(); return k ? (COMMANDS.find((c) => c.keys.includes(k)) || null) : null; };
     let parsed = null;
+    let command = null;
     let parseSeq = 0;
     const liveRegion = h("div", { class: "visually-hidden", "aria-live": "polite" });
     modal.append(liveRegion);
 
     const doParse = debounce(async (text) => {
       const seq = ++parseSeq;
+      command = matchCommand(text);
+      if (command) { parsed = null; tierEl.textContent = "command"; renderPreview(); return; }
       if (!text.trim()) { parsed = null; renderPreview(); return; }
       tierEl.textContent = "parsing…";
       try {
@@ -2065,9 +2078,16 @@
 
     function renderPreview() {
       preview.replaceChildren();
+      if (command) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "Open";
+        preview.append(row("Command", command.label));
+        return;
+      }
+      confirmBtn.textContent = "Confirm";
       if (!parsed) {
         confirmBtn.disabled = true;
-        preview.append(h("div", { class: "muted small", text: "Type a meeting in plain words. A confirm step always precedes any write." }));
+        preview.append(h("div", { class: "muted small", text: "Type a meeting in plain words — or a command like “settings”. A confirm step always precedes any write." }));
         return;
       }
       confirmBtn.disabled = false;
@@ -2091,6 +2111,8 @@
     confirmBtn.addEventListener("click", commit);
 
     async function commit() {
+      const cmd = command || matchCommand(input.value);
+      if (cmd) { closeModal(); cmd.run(); return; }
       if (!parsed) return;
       if (!confirmWrite()) return;
       const cal = (parsed.calendarId && state.calendars.find((c) => c.id === parsed.calendarId))
@@ -2666,12 +2688,13 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
       h("div", { class: "help-section" },
         h("h3", { text: "Keyboard" }),
         h("div", { class: "help-keys" },
-          ...keyRow("⌘/Ctrl K", "Command bar — type an event in plain words"),
+          ...keyRow("⌘/Ctrl K", "Command bar — type an event, or a command like “settings”"),
           ...keyRow("N", "New event"),
           ...keyRow("T", "Today"),
           ...keyRow("W", "Week view"),
           ...keyRow("D", "Day view"),
           ...keyRow("← / →", "Previous / next period"),
+          ...keyRow(",", "Settings"),
           ...keyRow("?", "This help"),
           ...keyRow("Esc", "Close"),
         )),
@@ -2825,6 +2848,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
       case "ArrowLeft": stepPeriod(-1); break;
       case "ArrowRight": stepPeriod(1); break;
       case "?": openHelp(); break;
+      case ",": openSettings(); break;
       default: return;
     }
     e.preventDefault();
@@ -2855,6 +2879,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
   $("#newEventBtn").addEventListener("click", () => openEventEditor());
   $("#cmdOpenBtn").addEventListener("click", () => openCommandBar());
   $("#helpBtn").addEventListener("click", () => openHelp());
+  $("#settingsBtn").addEventListener("click", () => openSettings());
   $("#acctBtn").addEventListener("click", () => openSettings());
   $("#connectBtn").addEventListener("click", () => Auth.begin());
 
