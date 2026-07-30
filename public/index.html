@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-XKWRLFAL7VUnfSVgPrkV8O8tkklpcB3U7AGa4jwMnmo=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-PDmahJ7/iuLAaZkVXKei80bK+pDRvg225YVWwdNjmeg=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -369,6 +369,64 @@
     .toast.alert .alert-when { font-size: 12.5px; opacity: .75; }
     .toast.alert .alert-actions { display: flex; gap: 14px; justify-content: flex-end; align-items: center; }
     .toast.alert .alert-actions a { color: inherit; font-weight: 700; text-decoration: underline; }
+    /* Active-card severity accents + the escalate-in-place pulse */
+    .toast.alert.sev-heads { border-color: var(--text); }
+    .toast.alert.sev-soon  { border-color: var(--accent); }
+    .toast.alert.sev-now   { border-color: var(--now); }
+    @keyframes escalate { 0% { transform: scale(1); } 30% { transform: scale(1.045); } 100% { transform: scale(1); } }
+    .toast.alert.pulse { animation: escalate .3s ease; }
+
+    /* ------------------------------------------------------------------ *
+     * Notification bell + center                                          *
+     * ------------------------------------------------------------------ */
+    .bellbtn { position: relative; }
+    .bell-badge {
+      position: absolute; top: -3px; right: -3px; min-width: 16px; height: 16px;
+      padding: 0 4px; border-radius: 999px; background: var(--now); color: #fff;
+      font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+      border: 1.5px solid var(--surface); pointer-events: none;
+    }
+    .notif-panel {
+      position: fixed; top: calc(var(--header-h) + 4px); right: 12px; z-index: 90;
+      width: 340px; max-width: calc(100vw - 24px);
+      max-height: min(70vh, 520px); display: flex; flex-direction: column;
+      background: var(--surface); border: 1px solid var(--border-strong);
+      border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
+      animation: rise .14s ease;
+    }
+    .notif-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; border-bottom: 1px solid var(--border); flex: 0 0 auto;
+    }
+    .notif-head .notif-title { font-weight: 650; }
+    .notif-head button {
+      background: transparent; border: 0; color: var(--text-dim); cursor: pointer;
+      font-weight: 600; text-decoration: underline; font-size: 12.5px;
+    }
+    .notif-head button:hover { color: var(--text); }
+    .notif-list { overflow-y: auto; flex: 1 1 auto; }
+    .notif-row {
+      display: flex; gap: 10px; padding: 10px 14px;
+      border-bottom: 1px solid var(--border); align-items: flex-start;
+    }
+    .notif-row:last-child { border-bottom: 0; }
+    .notif-row.unread { background: var(--accent-soft); }
+    .notif-ico { font-size: 15px; line-height: 1.35; flex: 0 0 auto; }
+    .notif-main { flex: 1 1 auto; min-width: 0; }
+    .notif-main .n-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .notif-main .n-when { font-size: 12px; color: var(--text-dim); }
+    .notif-main .n-actions { display: flex; gap: 14px; margin-top: 4px; }
+    .notif-main .n-actions a, .notif-main .n-actions button {
+      font-size: 12px; font-weight: 600; color: var(--accent);
+      text-decoration: none; background: transparent; border: 0; cursor: pointer; padding: 0;
+    }
+    .notif-main .n-actions a:hover, .notif-main .n-actions button:hover { text-decoration: underline; }
+    .notif-x {
+      background: transparent; border: 0; color: var(--text-faint); cursor: pointer;
+      font-size: 16px; line-height: 1; padding: 0 0 0 4px; flex: 0 0 auto;
+    }
+    .notif-x:hover { color: var(--text); }
+    .notif-empty { padding: 22px 14px; text-align: center; color: var(--text-faint); font-size: 13px; }
 
     .banner {
       background: #b8860020; color: var(--text); border-bottom: 1px solid var(--border);
@@ -624,6 +682,11 @@
 
       <button class="iconbtn" id="settingsBtn" title="Settings (,)" aria-label="Settings">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+
+      <button class="iconbtn bellbtn hidden" id="bellBtn" title="Notifications" aria-label="Notifications" aria-haspopup="dialog">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <span class="bell-badge hidden" id="bellBadge">0</span>
       </button>
 
       <button class="acct" id="acctBtn" title="Account &amp; settings">
@@ -2050,6 +2113,7 @@
     // Command palette: a few exact keywords short-circuit event parsing.
     const COMMANDS = [
       { keys: ["settings", "preferences", "prefs"], label: "⚙ Open Settings", run: openSettings },
+      { keys: ["notifications", "alerts", "inbox"], label: "🔔 Open notifications", run: openNotifPanel },
       { keys: ["help"], label: "? Open Help", run: openHelp },
     ];
     const matchCommand = (text) => { const k = text.trim().toLowerCase(); return k ? (COMMANDS.find((c) => c.keys.includes(k)) || null) : null; };
@@ -2436,8 +2500,67 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
    *  A 30s checker loop (not one-shot timers, which background tabs        *
    *  throttle) fires an in-app card + OS notification when an event is due *
    * ====================================================================== */
-  const Alerts = { fired: new Set(), snoozed: new Map(), pending: 0, baseTitle: document.title };
+  //  active: one loud card per event (evKey → entry) so tiers escalate in place
+  //  rather than stacking a fresh card each time.
+  const Alerts = { fired: new Set(), snoozed: new Map(), active: new Map(), baseTitle: document.title };
   const alertKey = (e) => (e._connId || "") + "::" + (e._calId || "") + "::" + (e.id || e.summary || "") + "::" + eventStart(e).toISOString();
+
+  // Severity tiers (rising urgency). A card only ever escalates, never downgrades.
+  const SEV = {
+    heads: { rank: 0, icon: "⏰", cls: "sev-heads" },  // silent heads-up (T−lead)
+    soon:  { rank: 1, icon: "🔔", cls: "sev-soon" },   // gentle ring (T−2min)
+    now:   { rank: 2, icon: "🚨", cls: "sev-now" },    // urgent ring (T−0)
+  };
+  const ringToSev = (ring) => (ring === "now" ? "now" : ring === "soon" ? "soon" : "heads");
+  function whenText(startMs) {
+    const mins = Math.round((startMs - Date.now()) / 60000);
+    return fmtTime(new Date(startMs)) + (mins > 0 ? " — in " + mins + " min" : mins === 0 ? " — starting now" : " — started " + (-mins) + " min ago");
+  }
+  const ACTIVE_CAP = 4;         // most loud cards at once; older ones recede to the bell
+  const DEMOTE_MS = 5 * 60000;  // a loud card recedes to the bell 5 min after the meeting starts
+
+  /* Notification center — a persistent, deduped history of fired alerts.
+     One entry per event occurrence (keyed like alertKey minus the tier), escalating
+     in severity. Persisted to the Vault (IndexedDB) so it survives a reload; pruned
+     to the last NOTIF_MAX and to meetings within NOTIF_TTL of now. */
+  const NOTIF_MAX = 50, NOTIF_TTL = 24 * 3600 * 1000;
+  const Notifs = {
+    items: [],
+    async load() {
+      try { const s = await Vault.get("notifs"); this.items = Array.isArray(s) ? s : []; }
+      catch (_) { this.items = []; }
+      this.prune();
+    },
+    save() { Vault.set("notifs", this.items).catch(() => {}); },
+    prune() {
+      const cut = Date.now() - NOTIF_TTL;
+      this.items = this.items.filter((n) => Date.parse(n.startISO) > cut).slice(-NOTIF_MAX);
+    },
+    unread() { return this.items.reduce((a, n) => a + (n.read ? 0 : 1), 0); },
+    find(key) { return this.items.find((n) => n.key === key); },
+    upsert(e, sev) {
+      const key = alertKey(e), now = Date.now();
+      let n = this.find(key);
+      if (!n) {
+        n = {
+          key, title: e.summary || "(busy)", startISO: eventStart(e).toISOString(),
+          severity: sev, joinLink: joinLinkFor(e) || null, htmlLink: e.htmlLink || null,
+          connId: e._connId || null, calId: e._calId || null, eventId: e.id || null,
+          firstSeen: now, lastSeen: now, read: false,
+        };
+        this.items.push(n);
+      } else {
+        if (SEV[sev].rank > SEV[n.severity].rank) { n.severity = sev; n.read = false; }
+        n.lastSeen = now;
+      }
+      this.prune(); this.save();
+      return n;
+    },
+    markAllRead() { let ch = false; for (const n of this.items) if (!n.read) { n.read = true; ch = true; } if (ch) this.save(); },
+    markRead(key) { const n = this.find(key); if (n && !n.read) { n.read = true; this.save(); } },
+    remove(key) { this.items = this.items.filter((n) => n.key !== key); this.save(); },
+    clear() { this.items = []; this.save(); },
+  };
 
   /* Audible chime — synthesized via Web Audio (no asset, CSP-clean: nothing is
      fetched). Browsers start an AudioContext suspended until a user gesture, so
@@ -2528,22 +2651,56 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     }
   }
   function updateAlertTitle() {
-    document.title = Alerts.pending > 0 ? "⏰ " + Alerts.baseTitle : Alerts.baseTitle;
+    document.title = Notifs.unread() > 0 ? "⏰ " + Alerts.baseTitle : Alerts.baseTitle;
   }
+
+  // Stamp a card's icon + severity accent for its current tier.
+  function setCardSeverity(card, titleEl, sev, e) {
+    card.classList.remove("sev-heads", "sev-soon", "sev-now");
+    card.classList.add(SEV[sev].cls);
+    titleEl.textContent = SEV[sev].icon + " " + (e.summary || "(busy)");
+  }
+  // Restart the escalate animation (re-trigger even if already applied).
+  function pulseCard(card) { card.classList.remove("pulse"); void card.offsetWidth; card.classList.add("pulse"); }
+
   function fireAlert(e, key, opts = {}) {
     const ring = opts.ring || null;   // "soon" (2 min before) | "now" (at start) | null (silent heads-up)
-    const start = eventStart(e);
-    const mins = Math.round((start.getTime() - Date.now()) / 60000);
-    const when = fmtTime(start) + (mins > 0 ? " — in " + mins + " min" : mins === 0 ? " — starting now" : " — started " + -mins + " min ago");
+    const sev = ringToSev(ring);
+    const startMs = eventStart(e).getTime();
 
-    // Play the matching chime (gentle for "soon", urgent for "now").
+    // Play the matching chime (gentle for "soon", urgent for "now"). Fires per
+    // tier even when the card only escalates — you still hear both rings.
     if (ring && prefs.alertSound) playChime(ring);
 
-    // In-app card: persists until dismissed or snoozed
+    // Record in the notification center (dedup + escalate by event).
+    Notifs.upsert(e, sev);
+
+    // One loud card per event: escalate an existing card in place instead of
+    // stacking a new one for each tier.
+    const evKey = alertKey(e);
+    const existing = Alerts.active.get(evKey);
+    if (existing) {
+      if (SEV[sev].rank >= SEV[existing.sev].rank) {
+        existing.sev = sev;
+        existing.key = key;                                   // snooze targets the tier now showing
+        setCardSeverity(existing.card, existing.titleEl, sev, e);
+        existing.whenEl.textContent = whenText(startMs);
+        pulseCard(existing.card);
+      }
+      renderBell();
+      return;
+    }
+
+    // In-app card: persists until dismissed, snoozed, or auto-demoted to the bell.
     const card = h("div", { class: "toast alert", role: "alert" });
-    const dismiss = () => { card.remove(); Alerts.pending = Math.max(0, Alerts.pending - 1); updateAlertTitle(); };
+    const entry = { card, sev, key, e, startMs, titleEl: null, whenEl: null };
+    const dismiss = () => {
+      card.remove(); Alerts.active.delete(evKey);
+      Notifs.markRead(evKey);   // dealt with — keep it browsable in the bell, but not unread
+      renderBell();
+    };
     const openBtn = h("button", { text: "Open" });
-    openBtn.addEventListener("click", () => { openEventDetail(e); dismiss(); });
+    openBtn.addEventListener("click", () => { openEventDetail(entry.e); dismiss(); });
     const joinLink = joinLinkFor(e);
     let joinA = null;
     if (joinLink) {
@@ -2551,29 +2708,123 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
       joinA.addEventListener("click", dismiss);
     }
     const snoozeBtn = h("button", { text: "Snooze 5m" });
-    snoozeBtn.addEventListener("click", () => { Alerts.fired.delete(key); Alerts.snoozed.set(key, Date.now() + 5 * 60000); dismiss(); });
+    snoozeBtn.addEventListener("click", () => { Alerts.fired.delete(entry.key); Alerts.snoozed.set(entry.key, Date.now() + 5 * 60000); dismiss(); });
     const dismissBtn = h("button", { text: "Dismiss" });
     dismissBtn.addEventListener("click", dismiss);
     const actions = h("div", { class: "alert-actions" }, ...(joinA ? [joinA] : []), openBtn, snoozeBtn, dismissBtn);
-    card.append(
-      h("div", { class: "alert-title", text: (ring === "now" ? "🚨 " : ring === "soon" ? "🔔 " : "⏰ ") + (e.summary || "(busy)") }),
-      h("div", { class: "alert-when", text: when }),
-      actions);
+    const titleEl = h("div", { class: "alert-title" });
+    const whenEl = h("div", { class: "alert-when", text: whenText(startMs) });
+    entry.titleEl = titleEl; entry.whenEl = whenEl;
+    setCardSeverity(card, titleEl, sev, e);
+    card.append(titleEl, whenEl, actions);
     if ("Notification" in window && Notification.permission === "default") {
       const enable = h("button", { text: "Enable browser alerts" });
       enable.addEventListener("click", () => { Notification.requestPermission(); enable.remove(); });
       actions.prepend(enable);
     }
     $("#toasts").append(card);
-    Alerts.pending++; updateAlertTitle();
+    Alerts.active.set(evKey, entry);
+    enforceActiveCap();
+    renderBell();
 
     // OS notification (works even when the tab is in the background)
     if ("Notification" in window && Notification.permission === "granted") {
       try {
-        const n = new Notification((ring === "now" ? "Starting now: " : ring === "soon" ? "Starting soon: " : "Upcoming: ") + (e.summary || "event"), { body: when + " (Google delivers the real reminder)", tag: key });
-        n.addEventListener("click", () => { window.focus(); openEventDetail(e); dismiss(); n.close(); });
+        const n = new Notification((ring === "now" ? "Starting now: " : ring === "soon" ? "Starting soon: " : "Upcoming: ") + (e.summary || "event"), { body: whenText(startMs) + " (Google delivers the real reminder)", tag: key });
+        n.addEventListener("click", () => { window.focus(); openEventDetail(entry.e); dismiss(); n.close(); });
       } catch (_) {} // some platforms throw on page-scope Notification
     }
+  }
+
+  // Cap the loud stack: oldest cards over the cap recede to the bell (still unread).
+  function enforceActiveCap() {
+    let over = Alerts.active.size - ACTIVE_CAP;
+    if (over <= 0) return;
+    for (const [k, entry] of Alerts.active) {
+      if (over-- <= 0) break;
+      entry.card.remove(); Alerts.active.delete(k);
+    }
+  }
+
+  // Periodic sweep: retire loud cards once their meeting is well underway (they
+  // live on in the bell), and keep the still-showing countdowns fresh.
+  function sweepAlerts() {
+    const now = Date.now();
+    for (const [k, entry] of Alerts.active) {
+      if (now > entry.startMs + DEMOTE_MS) { entry.card.remove(); Alerts.active.delete(k); }
+      else entry.whenEl.textContent = whenText(entry.startMs);
+    }
+    renderBell();
+  }
+
+  /* ---- Notification bell + dropdown center ------------------------------ */
+  function renderBell() {
+    const btn = $("#bellBtn"), badge = $("#bellBadge");
+    if (!btn) return;
+    btn.classList.toggle("hidden", Notifs.items.length === 0);
+    const u = Notifs.unread();
+    if (u > 0) { badge.textContent = u > 9 ? "9+" : String(u); badge.classList.remove("hidden"); }
+    else badge.classList.add("hidden");
+    updateAlertTitle();
+    if (_notifPanel) renderNotifList();
+  }
+
+  let _notifPanel = null;
+  function openNotifPanel() {
+    Notifs.markAllRead();
+    if (!_notifPanel) {
+      _notifPanel = h("div", { class: "notif-panel", role: "dialog", "aria-label": "Notifications" });
+      document.body.append(_notifPanel);
+      setTimeout(() => document.addEventListener("pointerdown", onNotifOutside, true), 0);
+    }
+    renderNotifList();
+    renderBell();
+  }
+  function closeNotifPanel() {
+    if (!_notifPanel) return;
+    _notifPanel.remove(); _notifPanel = null;
+    document.removeEventListener("pointerdown", onNotifOutside, true);
+  }
+  function toggleNotifPanel() { _notifPanel ? closeNotifPanel() : openNotifPanel(); }
+  function onNotifOutside(ev) {
+    if (_notifPanel && !_notifPanel.contains(ev.target) && !ev.target.closest("#bellBtn")) closeNotifPanel();
+  }
+
+  function renderNotifList() {
+    const panel = _notifPanel; if (!panel) return;
+    panel.textContent = "";
+    const clearBtn = h("button", { text: "Clear all" });
+    clearBtn.addEventListener("click", () => { Notifs.clear(); closeNotifPanel(); renderBell(); });
+    panel.append(h("div", { class: "notif-head" }, h("span", { class: "notif-title", text: "Notifications" }), clearBtn));
+    const list = h("div", { class: "notif-list" });
+    if (!Notifs.items.length) list.append(h("div", { class: "notif-empty", text: "No notifications." }));
+    else for (const n of [...Notifs.items].reverse()) list.append(notifRow(n));   // newest first
+    panel.append(list);
+  }
+  function notifRow(n) {
+    const sev = SEV[n.severity] || SEV.heads;
+    const row = h("div", { class: "notif-row" + (n.read ? "" : " unread") });
+    const actions = h("div", { class: "n-actions" });
+    if (n.joinLink) actions.append(h("a", { href: n.joinLink, target: "_blank", rel: "noopener noreferrer", text: "Join" }));
+    const openB = h("button", { text: "Open" });
+    openB.addEventListener("click", () => openNotif(n));
+    actions.append(openB);
+    const main = h("div", { class: "notif-main" },
+      h("div", { class: "n-title", text: n.title }),
+      h("div", { class: "n-when", text: whenText(Date.parse(n.startISO)) }),
+      actions);
+    const x = h("button", { class: "notif-x", "aria-label": "Dismiss", html: "&times;" });
+    x.addEventListener("click", () => { Notifs.remove(n.key); renderBell(); renderNotifList(); });
+    row.append(h("div", { class: "notif-ico", text: sev.icon }), main, x);
+    return row;
+  }
+  // "Open" from the bell: prefer the live event (in-app detail); fall back to the
+  // Google Calendar page if it's no longer loaded (e.g. after a reload).
+  function openNotif(n) {
+    const live = state.events.find((x) => (x._connId || null) === n.connId && (x._calId || null) === n.calId && (x.id || null) === n.eventId);
+    if (live) { openEventDetail(live); closeNotifPanel(); }
+    else if (n.htmlLink) { window.open(n.htmlLink, "_blank", "noopener"); }
+    else toast("That event isn't loaded anymore.", "err");
   }
 
   /* ====================================================================== *
@@ -2835,6 +3086,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     // global: command bar + escape always available
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if (Auth.isConnected()) openCommandBar(); return; }
     if (e.key === "Escape" && activeModal) { e.preventDefault(); closeModal(); return; }
+    if (e.key === "Escape" && _notifPanel) { e.preventDefault(); closeNotifPanel(); return; }
     // Escape backs out of a pushed detail view to Notes — before the isTyping
     // guard so it works while the cursor is in a note field (flush-saves first).
     if (e.key === "Escape" && Panel.shown && Panel.view !== "notes") { e.preventDefault(); panelBack(); return; }
@@ -2880,6 +3132,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
   $("#cmdOpenBtn").addEventListener("click", () => openCommandBar());
   $("#helpBtn").addEventListener("click", () => openHelp());
   $("#settingsBtn").addEventListener("click", () => openSettings());
+  $("#bellBtn").addEventListener("click", () => toggleNotifPanel());
   $("#acctBtn").addEventListener("click", () => openSettings());
   $("#connectBtn").addEventListener("click", () => Auth.begin());
 
@@ -2917,9 +3170,10 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
   drawDateFavicon();
   setInterval(drawDateFavicon, 60000); // rolls over at local midnight
 
-  // alert checker: every 30s, plus immediately when a throttled tab wakes up
-  setInterval(checkAlerts, 30000);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkAlerts(); });
+  // alert checker: every 30s, plus immediately when a throttled tab wakes up.
+  // sweepAlerts retires stale loud cards to the bell and refreshes countdowns.
+  setInterval(() => { checkAlerts(); sweepAlerts(); }, 30000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { checkAlerts(); sweepAlerts(); } });
 
   // long-lived tabs: refresh events every 10 min so alerts cover newly added ones
   setInterval(() => {
@@ -2940,6 +3194,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
     $("#app").classList.remove("hidden");
     state.view = prefs.defaultView;
     updateAcctChip();
+    renderBell();                            // reflect any persisted notifications
     await ensureCalendars();
     await loadEvents();
     panelInit(); // show the persistent right rail (desktop) with month nav + notes
@@ -2947,6 +3202,7 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
 
   async function boot() {
     await loadPrefs();
+    await Notifs.load();                      // persisted notification history (survives reload)
     await Auth.loadStored();                 // stored accounts + their refresh tokens
     await Auth.handleRedirect();             // returning from Google? exchange the ?code
     const anyLive = await Auth.warmup();      // silently mint access tokens via /api/refresh
