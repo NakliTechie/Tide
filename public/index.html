@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-LQFD2Zr64y4vYdghTJEihXEJuu8S1KhAqPU0vuI4WUA=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-IQ4TNKrmQilqNkqgmReversenRDh12Zj1lT5ooFCbWY=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -1127,16 +1127,19 @@
     }
 
     if (intent === "reschedule") {
+      // Hints are optional now — the raw phrase drives target resolution (the model
+      // routinely drops them). The NEW time comes from the destination part after
+      // "to" ("move X to 4pm" → 4pm), so the target's own time can't be mistaken
+      // for it. Model's ISO newStart wins when present.
       const match = { timeHint: cleanStr(parsed.timeHint, 120), titleHint: cleanStr(parsed.titleHint, 200) };
-      if (!match.timeHint && !match.titleHint) return null;      // nothing to resolve against
-      const newStartMs = resolveField(parsed.newStart, raw, now);
+      const destPart = String(raw).split(/\bto\b/i).slice(1).join(" to ") || raw;
+      const newStartMs = isoWithOffsetToMs(parsed.newStart) ?? resolveRelativeTime(destPart, now);
       const newEndMs = isoWithOffsetToMs(parsed.newEnd);
       return { intent, raw, match, newStartMs, newEndMs: newEndMs && newStartMs && newEndMs > newStartMs ? newEndMs : null, needsTime: newStartMs == null };
     }
 
     if (intent === "cancel") {
       const match = { timeHint: cleanStr(parsed.timeHint, 120), titleHint: cleanStr(parsed.titleHint, 200) };
-      if (!match.timeHint && !match.titleHint) return null;
       return { intent, raw, match };
     }
 
@@ -1223,8 +1226,14 @@
       return normalizeIntent(parsed, text, now);
     }
     async chooseEvent(candidates, hint) {
-      const m = (candidates || []).find((e) => titleMatches(e, hint));
-      return m ? m.id : null;
+      // Deterministic stand-in for the real backend's Nano semantic match: key on
+      // the distinctive words from the request; return an event only when exactly
+      // one matches (else null → the surface offers a pick-list, same as the real
+      // backend returning "unsure").
+      const toks = titleTokens(hint);
+      if (!toks.length) return null;
+      const hits = (candidates || []).filter((e) => { const t = String(e.title || "").toLowerCase(); return toks.every((w) => t.includes(w)); });
+      return hits.length === 1 ? hits[0].id : null;
     }
     async summarize(question, events) {
       const n = (events || []).length;
@@ -1374,14 +1383,11 @@
       }
       if (!dayEvents.length) dayEvents = all;
     }
-    // Distinctive title words from what the user TYPED (the model's titleHint is
-    // unreliable and often null — the raw phrase always has the words). An event
-    // is a candidate when its title contains every distinctive word.
-    const queryTokens = [...new Set([...titleTokens(rawPhrase), ...titleTokens(match && match.titleHint)])];
-    const candidates = queryTokens.length
-      ? dayEvents.filter((e) => { const t = String(e.title || "").toLowerCase(); return queryTokens.every((w) => t.includes(w)); })
-      : dayEvents;
-    return { candidates, dayEvents, anchored, windowFromMs: fromMs, windowToMs: toMs };
+    // The DAY is deterministic; picking WHICH event on that day is the model's job
+    // (semantic match over this small set), so we return the day's events and let
+    // plan() ask the model. Nano is reliable once it only chooses within the
+    // correct day — its weakness is dates, which we've already pinned down.
+    return { dayEvents, anchored, windowFromMs: fromMs, windowToMs: toMs };
   }
 
   // Ask the model to pick WHICH pre-filtered candidate (A5/I3). No model, or no
@@ -1414,19 +1420,30 @@
     }
 
     if (intent.intent === "reschedule" || intent.intent === "cancel") {
-      const { candidates, dayEvents, anchored } = await resolveTargets(intent.match, ctx, intent.raw);
-      // Safety (post-incident): a mutation auto-targets ONLY when there is exactly
-      // one candidate. The model's title extraction is unreliable (it drops the
-      // title, or the time), so we never let it auto-pick which event to change or
-      // delete — anything ambiguous becomes a pick-list the user chooses from.
-      let target = null, list = candidates, titleMissed = false;
-      if (candidates.length === 1) target = candidates[0];
-      else if (candidates.length === 0 && anchored && dayEvents.length) { list = dayEvents; titleMissed = true; } // title matched nothing on that day → pick from it
-      // candidates.length > 1 → pick-list (target stays null); no model auto-pick.
+      // For reschedule the phrase carries the DESTINATION time too ("move X to 4pm")
+      // — split on "to" so only the target part ("move X") anchors the day/hour and
+      // drives the match; the destination drives the new time (normalizeIntent).
+      const targetText = intent.intent === "reschedule" ? String(intent.raw || "").split(/\bto\b/i)[0] : intent.raw;
+      const { dayEvents, anchored } = await resolveTargets(intent.match, ctx, targetText);
+      // Division of labour: the DAY is deterministic; the model picks WHICH event on
+      // that day (semantic — good at language, and it only ever sees the correct
+      // day's small set). One event → target; several → the model picks (or, if it
+      // can't confidently, a pick-list); none → notFound. Every result still
+      // requires an explicit confirm, so a wrong pick is caught before it lands.
+      let target = null, titleMissed = false;
+      if (anchored && dayEvents.length === 1) target = dayEvents[0]; // the only event on the named day
+      else if (dayEvents.length >= 1) {
+        target = await disambiguate(dayEvents, targetText, ctx); // model semantic-match
+        // Model unsure: offer a pick-list of the DAY (a specific day is a small,
+        // sensible list). With no day anchored, don't dump a 14-day window — that's
+        // an honest "couldn't find it", ask the user to name the day/event.
+        if (!target && anchored) titleMissed = true;
+      }
+      const list = titleMissed ? dayEvents : (target ? [target] : []);
       const out = {
         kind: intent.intent, match: intent.match, candidates: list, target, titleMissed,
-        notFound: candidates.length === 0 && !(anchored && dayEvents.length),
-        ambiguous: !target && list.length > 1,
+        notFound: !target && !titleMissed,
+        ambiguous: titleMissed,
       };
       if (intent.intent === "reschedule") {
         out.newStartMs = intent.newStartMs;

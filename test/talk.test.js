@@ -88,14 +88,17 @@ test("normalizeIntent find_slot — duration + default one-week window", () => {
   assert.equal(i.toMs - i.fromMs, 7 * 86400000);
 });
 
-test("normalizeIntent reschedule/cancel — require a match hint", () => {
+test("normalizeIntent reschedule/cancel — hints optional; new time from the destination", () => {
   const r = normalizeIntent({ intent: "reschedule", timeHint: "2pm", newStart: "2026-08-06T16:00:00+05:30" }, "push my 2pm to 4pm", NOW);
   assert.equal(r.match.timeHint, "2pm");
-  assert.equal(r.newStartMs, Date.parse("2026-08-06T16:00:00+05:30"));
-  assert.equal(normalizeIntent({ intent: "reschedule", newStart: "2026-08-06T16:00:00+05:30" }, "move it", NOW), null);
-  const c = normalizeIntent({ intent: "cancel", titleHint: "the dentist" }, "cancel the dentist", NOW);
-  assert.equal(c.match.titleHint, "the dentist");
-  assert.equal(normalizeIntent({ intent: "cancel" }, "cancel", NOW), null);
+  assert.equal(r.newStartMs, Date.parse("2026-08-06T16:00:00+05:30")); // model ISO wins
+  // No model newStart → resolved from the destination part after "to" ("…to 4pm"),
+  // NOT the target's own time.
+  const r2 = normalizeIntent({ intent: "reschedule" }, "move standup to 4pm", NOW);
+  assert.equal(r2.intent, "reschedule");
+  assert.deepEqual(formatLocalFields(r2.newStartMs), { date: "06/08/2026", time: "16:00" });
+  // Hints are optional now — the raw phrase resolves the target downstream.
+  assert.equal(normalizeIntent({ intent: "cancel" }, "cancel the standup", NOW).intent, "cancel");
 });
 
 test("normalizeIntent — rejects unknown / missing intent", () => {
@@ -228,8 +231,8 @@ test("plan find_slot → returns slots", async () => {
 
 test("plan reschedule (single match) preserves duration; commit patches start+end", async () => {
   const agent = fakeAgent();
-  const intent = { intent: "reschedule", match: { titleHint: "standup" }, newStartMs: new Date(2026, 7, 6, 16, 0).getTime(), newEndMs: null, needsTime: false };
-  const p = await plan(intent, { agent, now: NOW });
+  const intent = { intent: "reschedule", raw: "move standup to 4pm", match: { titleHint: "standup" }, newStartMs: new Date(2026, 7, 6, 16, 0).getTime(), newEndMs: null, needsTime: false };
+  const p = await plan(intent, { agent, talk: Talk.fake(), now: NOW });
   assert.equal(p.target.id, "B");
   assert.equal(p.needsConfirm, true);
   // Standup is 15 min → new end is 16:15.
@@ -240,10 +243,11 @@ test("plan reschedule (single match) preserves duration; commit patches start+en
   assert.equal(new Date(call[1].end).getTime(), new Date(2026, 7, 6, 16, 15).getTime());
 });
 
-test("plan reschedule ambiguous (two 2pm events, no model) → pick-list, no target", async () => {
+test("plan reschedule ambiguous (two 2pm events, model unsure) → pick-list, no target", async () => {
   const agent = fakeAgent();
-  const p = await plan({ intent: "reschedule", match: { timeHint: "2pm" }, newStartMs: new Date(2026, 7, 6, 16, 0).getTime() }, { agent, now: NOW });
-  assert.equal(p.candidates.length, 2); // Dentist + Lunch both at 14:00
+  // "2pm" anchors the hour (Dentist + Lunch both at 14:00); no distinctive title → pick-list.
+  const p = await plan({ intent: "reschedule", raw: "move my 2pm to 4pm", match: { timeHint: "2pm" }, newStartMs: new Date(2026, 7, 6, 16, 0).getTime() }, { agent, talk: Talk.fake(), now: NOW });
+  assert.equal(p.candidates.length, 2);
   assert.equal(p.target, null);
   assert.equal(p.ambiguous, true);
   assert.equal(p.needsConfirm, false);
@@ -251,25 +255,25 @@ test("plan reschedule ambiguous (two 2pm events, no model) → pick-list, no tar
 
 test("plan cancel by title → target found; commit deletes", async () => {
   const agent = fakeAgent();
-  const p = await plan({ intent: "cancel", match: { titleHint: "dentist" } }, { agent, now: NOW });
+  const p = await plan({ intent: "cancel", raw: "cancel the dentist", match: { titleHint: "dentist" } }, { agent, talk: Talk.fake(), now: NOW });
   assert.equal(p.target.id, "A");
   assert.equal(p.needsConfirm, true);
   await commit(p, { agent });
   assert.deepEqual(agent.calls.find((c) => c[0] === "delete")[1], { id: "A", calendarId: "cal1" });
 });
 
-test("plan cancel no match → notFound; commit refuses", async () => {
+test("plan cancel no match, no day → notFound; commit refuses", async () => {
   const agent = fakeAgent();
-  const p = await plan({ intent: "cancel", match: { titleHint: "nonexistent" } }, { agent, now: NOW });
+  const p = await plan({ intent: "cancel", raw: "cancel the nonexistent thing", match: { titleHint: "nonexistent" } }, { agent, talk: Talk.fake(), now: NOW });
   assert.equal(p.notFound, true);
   assert.equal(p.needsConfirm, false);
   await assert.rejects(() => commit(p, { agent }), /nothing to cancel/);
 });
 
-test("resolveTargets narrows by title hint", async () => {
-  const { candidates } = await resolveTargets({ titleHint: "dentist" }, { agent: fakeAgent(), now: NOW });
-  assert.equal(candidates.length, 1);
-  assert.equal(candidates[0].title, "Dentist");
+test("resolveTargets returns the anchored day's events (day is deterministic; no title filter)", async () => {
+  const { dayEvents, anchored } = await resolveTargets({}, { agent: fakeAgent(), now: NOW }, "tomorrow");
+  assert.equal(anchored, true);
+  assert.deepEqual(dayEvents.map((e) => e.title).sort(), ["Dentist", "Lunch", "Standup"]); // all of Aug 6
 });
 
 test("resolveTargets resolves a bare day word (tomorrow) to that day, not the 14-day window", async () => {
@@ -281,17 +285,17 @@ test("resolveTargets resolves a bare day word (tomorrow) to that day, not the 14
   const agent = {
     async listEvents({ from, to }) { const f = +new Date(from), t = +new Date(to); return twoScrums.filter((e) => { const s = +new Date(e.start); return s >= f && s < t; }); },
   };
-  const { candidates } = await resolveTargets({ timeHint: "tomorrow", titleHint: "scrum" }, { agent, now: NOW });
-  assert.equal(candidates.length, 1);
-  assert.equal(candidates[0].id, "tmrw-scrum");
-  // And a cancel plan resolves it to a single confirmable target.
-  const p = await plan({ intent: "cancel", match: { timeHint: "tomorrow", titleHint: "scrum" } }, { agent, now: NOW });
+  const { dayEvents } = await resolveTargets({ timeHint: "tomorrow" }, { agent, now: NOW });
+  assert.equal(dayEvents.length, 1);
+  assert.equal(dayEvents[0].id, "tmrw-scrum");
+  // A cancel plan resolves it to a single confirmable target (only event that day).
+  const p = await plan({ intent: "cancel", raw: "cancel tomorrow's scrum", match: { timeHint: "tomorrow", titleHint: "scrum" } }, { agent, talk: Talk.fake(), now: NOW });
   assert.equal(p.target.id, "tmrw-scrum");
   assert.equal(p.needsConfirm, true);
   // The model may resolve "tomorrow" to an absolute date — ISO or worded, both
   // interpreted as the LOCAL day (Aug 6), never today.
-  assert.equal((await resolveTargets({ timeHint: "2026-08-06", titleHint: "scrum" }, { agent, now: NOW })).candidates[0].id, "tmrw-scrum");
-  assert.equal((await resolveTargets({ timeHint: "August 6, 2026", titleHint: "scrum" }, { agent, now: NOW })).candidates[0].id, "tmrw-scrum");
+  assert.equal((await resolveTargets({ timeHint: "2026-08-06" }, { agent, now: NOW })).dayEvents[0].id, "tmrw-scrum");
+  assert.equal((await resolveTargets({ timeHint: "August 6, 2026" }, { agent, now: NOW })).dayEvents[0].id, "tmrw-scrum");
 });
 
 const tmrwShop = [
@@ -305,14 +309,14 @@ test("plan cancel — distinctive word from the RAW phrase finds the event even 
   // The exact live failure: "delete tomorrow's shop meeting" — model returned
   // titleHint:null. "shop" is pulled from the raw phrase (generic words dropped)
   // and matches tomorrow's "Shop", not today's, not "Daily Meeting".
-  const p = await plan({ intent: "cancel", raw: "delete tomorrow's shop meeting", match: { timeHint: null, titleHint: null } }, { agent: shopAgent, now: NOW });
+  const p = await plan({ intent: "cancel", raw: "delete tomorrow's shop meeting", match: { timeHint: null, titleHint: null } }, { agent: shopAgent, talk: Talk.fake(), now: NOW });
   assert.equal(p.notFound, false);
   assert.equal(p.target.id, "a");        // tomorrow's Shop
   assert.equal(p.needsConfirm, true);
 });
 
 test("plan cancel — no distinctive word matches → pick-list of that day (titleMissed), never auto-delete", async () => {
-  const p = await plan({ intent: "cancel", raw: "delete tomorrow's zebra call", match: { timeHint: null, titleHint: null } }, { agent: shopAgent, now: NOW });
+  const p = await plan({ intent: "cancel", raw: "delete tomorrow's zebra call", match: { timeHint: null, titleHint: null } }, { agent: shopAgent, talk: Talk.fake(), now: NOW });
   assert.equal(p.titleMissed, true);
   assert.equal(p.target, null);
   assert.deepEqual(p.candidates.map((e) => e.id).sort(), ["a", "b"]); // tomorrow's events to choose from
