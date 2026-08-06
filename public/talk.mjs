@@ -428,6 +428,27 @@ class RealBackend {
       return normalizeIntent(extractJson(out), text, now);
     } finally { if (s.destroy) s.destroy(); }
   }
+  async chooseEvent(candidates, hint, now = Date.now()) {
+    if (!candidates || candidates.length === 0) return null;
+    const s = await this.session();
+    try {
+      const prompt = buildDisambiguationPrompt(candidates, hint, buildTimeContext(now));
+      let out;
+      try { out = await s.prompt(prompt, { responseConstraint: { type: "object", additionalProperties: false, properties: { id: { type: ["string", "null"] } }, required: ["id"] } }); }
+      catch { out = await s.prompt(prompt); }
+      return normalizeChosenId(extractJson(out), candidates);
+    } finally { if (s.destroy) s.destroy(); }
+  }
+  async summarize(question, events, now = Date.now()) {
+    const s = await this.session();
+    try {
+      const prompt = buildEventSummaryPrompt(question, events, buildTimeContext(now));
+      let out;
+      try { out = await s.prompt(prompt, { responseConstraint: { type: "object", additionalProperties: false, properties: { answer: { type: "string" } }, required: ["answer"] } }); }
+      catch { out = await s.prompt(prompt); }
+      return normalizeSummary(extractJson(out));
+    } finally { if (s.destroy) s.destroy(); }
+  }
 }
 
 // Deterministic stand-in — dev + tests only. Simulates the classification Nano
@@ -454,6 +475,14 @@ class FakeLanguageModel {
       parsed = { intent: "create", title: fakeTitle(t), start: fakeIso(resolveRelativeTime(t, now), time) };
     }
     return normalizeIntent(parsed, text, now);
+  }
+  async chooseEvent(candidates, hint) {
+    const m = (candidates || []).find((e) => titleMatches(e, hint));
+    return m ? m.id : null;
+  }
+  async summarize(question, events) {
+    const n = (events || []).length;
+    return normalizeSummary({ answer: n ? `You have ${n} event${n > 1 ? "s" : ""} in that range.` : "Nothing on your calendar for that range." });
   }
 }
 
@@ -487,4 +516,141 @@ export class Talk {
   warm() { return this.backend.warm ? this.backend.warm() : Promise.resolve(null); }
   release() { return this.backend.release ? this.backend.release() : Promise.resolve(); }
   parse(text, now) { return this.backend.parse(text, now); }
+  chooseEvent(candidates, hint, now) { return this.backend.chooseEvent(candidates, hint, now); }
+  summarize(question, events, now) { return this.backend.summarize(question, events, now); }
+}
+
+// ============================================================
+// Dispatch (Phase 2) — a normalized intent → agent-face actions.
+//
+// plan() turns an intent into what the ⌘K surface renders. Read intents
+// (query/find_slot) have no side effect, so they execute immediately and carry
+// their result. Mutations (create/reschedule/cancel) resolve their target and
+// return a draft with needsConfirm; commit() performs the write only after the
+// user confirms (I4). ctx = { agent, talk?, now? } — `agent` is window.tide.agent
+// (or a fake in tests); `talk` enables model disambiguation/summary.
+// ============================================================
+
+function sameLocalDay(a, b) {
+  const x = new Date(a), y = new Date(b);
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+}
+
+// Case-insensitive title match, tolerant of leading "the/my/a" and multi-word
+// hints (every significant word must appear). Exported for the fake backend.
+export function titleMatches(ev, hint) {
+  const h = String(hint || "").toLowerCase().replace(/^(the|my|a|an)\s+/, "").trim();
+  if (!h) return true;
+  const t = String((ev && (ev.title ?? ev.summary)) || "").toLowerCase();
+  if (t.includes(h)) return true;
+  const words = h.split(/\s+/).filter((w) => w.length > 2);
+  return words.length > 0 && words.every((w) => t.includes(w));
+}
+
+// Deterministic candidate resolution (A5): fetch events over a window derived
+// from the time hint (the hinted day, else the next 14 days), then narrow by the
+// hinted clock hour and by the title hint. Returns { candidates, windowFromMs,
+// windowToMs }. The model never sees the whole calendar — only this candidate set.
+export async function resolveTargets(match, ctx) {
+  const now = ctx.now ?? Date.now();
+  const hintMs = match && match.timeHint ? resolveRelativeTime(match.timeHint, now) : null;
+  const fromMs = hintMs != null ? startOfLocalDay(hintMs) : startOfLocalDay(now);
+  const toMs = hintMs != null ? fromMs + DAY_MS : fromMs + 14 * DAY_MS;
+  const events = await ctx.agent.listEvents({ from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() });
+  let cands = Array.isArray(events) ? events.slice() : [];
+  if (hintMs != null) {
+    const hintHour = new Date(hintMs).getHours();
+    const byHour = cands.filter((e) => { const s = new Date(e.start); return sameLocalDay(s.getTime(), hintMs) && s.getHours() === hintHour; });
+    const byDay = cands.filter((e) => sameLocalDay(new Date(e.start).getTime(), hintMs));
+    cands = byHour.length ? byHour : (byDay.length ? byDay : cands);
+  }
+  if (match && match.titleHint) {
+    const narrowed = cands.filter((e) => titleMatches(e, match.titleHint));
+    // Title is authoritative when it's the only signal (may narrow to 0 →
+    // notFound); with a time hint anchoring the window, only apply the title
+    // filter if it matched something (the hint may be imperfect).
+    if (narrowed.length || hintMs == null) cands = narrowed;
+  }
+  return { candidates: cands, windowFromMs: fromMs, windowToMs: toMs };
+}
+
+// Ask the model to pick WHICH pre-filtered candidate (A5/I3). No model, or no
+// confident pick → null, and the surface shows a pick-list instead.
+export async function disambiguate(candidates, hint, ctx) {
+  if (!ctx.talk || !ctx.talk.chooseEvent || !candidates || candidates.length === 0) return null;
+  const id = await ctx.talk.chooseEvent(candidates, hint, ctx.now);
+  return candidates.find((e) => String(e.id) === String(id)) || null;
+}
+
+export async function plan(intent, ctx) {
+  const now = ctx.now ?? Date.now();
+  if (!intent || !intent.intent) return { kind: "unknown" };
+
+  if (intent.intent === "create") {
+    return {
+      kind: "create", needsConfirm: intent.startMs != null, needsTime: intent.needsTime,
+      draft: { title: intent.title, startMs: intent.startMs, endMs: intent.endMs, description: intent.description, calendarHint: intent.calendarHint },
+    };
+  }
+
+  if (intent.intent === "query") {
+    const events = await ctx.agent.listEvents({ from: new Date(intent.fromMs).toISOString(), to: new Date(intent.toMs).toISOString() });
+    return { kind: "query", fromMs: intent.fromMs, toMs: intent.toMs, events: events || [] };
+  }
+
+  if (intent.intent === "find_slot") {
+    const slots = await ctx.agent.findSlots({ durationMin: intent.durationMin, window: { from: new Date(intent.fromMs).toISOString(), to: new Date(intent.toMs).toISOString() } });
+    return { kind: "find_slot", durationMin: intent.durationMin, slots: slots || [] };
+  }
+
+  if (intent.intent === "reschedule" || intent.intent === "cancel") {
+    const { candidates } = await resolveTargets(intent.match, ctx);
+    let target = candidates.length === 1 ? candidates[0] : null;
+    if (!target && candidates.length > 1) target = await disambiguate(candidates, intent.match.titleHint || intent.match.timeHint, ctx);
+    const out = {
+      kind: intent.intent, match: intent.match, candidates, target,
+      notFound: candidates.length === 0, ambiguous: !target && candidates.length > 1,
+    };
+    if (intent.intent === "reschedule") {
+      out.newStartMs = intent.newStartMs;
+      out.needsTime = intent.needsTime;
+      if (target && intent.newStartMs != null) {
+        const dur = new Date(target.end).getTime() - new Date(target.start).getTime();
+        out.newEndMs = intent.newEndMs != null ? intent.newEndMs : intent.newStartMs + (dur > 0 ? dur : 3600000);
+      }
+      out.needsConfirm = !!target && intent.newStartMs != null;
+    } else {
+      out.needsConfirm = !!target; // cancel
+    }
+    return out;
+  }
+
+  return { kind: "unknown" };
+}
+
+// Perform the staged mutation via the agent face. Called ONLY after the user
+// confirms (I4). Reads never reach here.
+export async function commit(p, ctx) {
+  if (!p) throw new Error("no plan");
+  if (p.kind === "create") {
+    if (p.needsTime || p.draft.startMs == null) throw new Error("time not set");
+    return ctx.agent.createEvent({
+      title: p.draft.title, start: new Date(p.draft.startMs).toISOString(),
+      end: p.draft.endMs != null ? new Date(p.draft.endMs).toISOString() : undefined,
+      description: p.draft.description || undefined,
+    });
+  }
+  if (p.kind === "reschedule") {
+    if (!p.target || p.newStartMs == null) throw new Error("nothing to reschedule");
+    return ctx.agent.updateEvent({
+      id: p.target.id, calendarId: p.target.calendarId,
+      start: new Date(p.newStartMs).toISOString(),
+      end: p.newEndMs != null ? new Date(p.newEndMs).toISOString() : undefined,
+    });
+  }
+  if (p.kind === "cancel") {
+    if (!p.target) throw new Error("nothing to cancel");
+    return ctx.agent.deleteEvent({ id: p.target.id, calendarId: p.target.calendarId });
+  }
+  throw new Error(`cannot commit a ${p.kind} plan`);
 }

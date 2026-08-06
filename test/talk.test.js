@@ -4,6 +4,7 @@ import {
   probeAvailability, buildTimeContext, resolveRelativeTime, formatLocalFields, parseLocalFields,
   normalizeIntent, extractJson, buildParsePrompt, buildEventSummaryPrompt, buildDisambiguationPrompt,
   normalizeChosenId, normalizeSummary, UNTRUSTED_RULES, Talk,
+  plan, commit, resolveTargets, disambiguate, titleMatches,
 } from "../public/talk.mjs";
 
 // A fixed "now": Wed 2026-08-05, 17:00 local. Assertions go through
@@ -166,4 +167,119 @@ test("normalizeChosenId — only ids in the candidate set survive", () => {
 test("normalizeSummary — bounded string or null", () => {
   assert.deepEqual(normalizeSummary({ answer: "  You have 3 meetings.  " }), { answer: "You have 3 meetings." });
   assert.deepEqual(normalizeSummary({}), { answer: null });
+});
+
+// ---- Phase 2: dispatch (plan/commit) against a fake agent ---------------
+const localISO = (y, mo, d, h, mi) => new Date(y, mo, d, h, mi, 0, 0).toISOString();
+const EVENTS = [
+  { id: "A", calendarId: "cal1", title: "Dentist", start: localISO(2026, 7, 6, 14, 0), end: localISO(2026, 7, 6, 15, 0) },
+  { id: "B", calendarId: "cal1", title: "Standup", start: localISO(2026, 7, 6, 9, 0), end: localISO(2026, 7, 6, 9, 15) },
+  { id: "C", calendarId: "cal1", title: "Lunch", start: localISO(2026, 7, 6, 14, 0), end: localISO(2026, 7, 6, 14, 30) },
+];
+function fakeAgent(events = EVENTS) {
+  const calls = [];
+  return {
+    calls,
+    async listEvents({ from, to }) {
+      const f = new Date(from).getTime(), t = new Date(to).getTime();
+      return events.filter((e) => { const s = new Date(e.start).getTime(); return s >= f && s < t; });
+    },
+    async createEvent(a) { calls.push(["create", a]); return { id: "new1", ...a }; },
+    async updateEvent(a) { calls.push(["update", a]); return { id: a.id, ...a }; },
+    async deleteEvent(a) { calls.push(["delete", a]); return { id: a.id, deleted: true }; },
+    async findSlots(a) { calls.push(["findSlots", a]); return [{ start: localISO(2026, 7, 6, 10, 0), end: localISO(2026, 7, 6, 10, 30) }]; },
+  };
+}
+
+test("plan create → stages a draft; commit calls createEvent", async () => {
+  const agent = fakeAgent();
+  const intent = { intent: "create", title: "Lunch", startMs: new Date(2026, 7, 6, 12, 0).getTime(), endMs: null, needsTime: false };
+  const p = await plan(intent, { agent, now: NOW });
+  assert.equal(p.kind, "create");
+  assert.equal(p.needsConfirm, true);
+  await commit(p, { agent });
+  const call = agent.calls.find((c) => c[0] === "create");
+  assert.equal(call[1].title, "Lunch");
+  assert.equal(new Date(call[1].start).getTime(), intent.startMs);
+});
+
+test("plan create without a time → no confirm, commit refuses", async () => {
+  const agent = fakeAgent();
+  const p = await plan({ intent: "create", title: "Lunch", startMs: null, needsTime: true }, { agent, now: NOW });
+  assert.equal(p.needsConfirm, false);
+  assert.equal(p.needsTime, true);
+  await assert.rejects(() => commit(p, { agent }), /time not set/);
+});
+
+test("plan query → fetches the day's events (read, no side effect)", async () => {
+  const agent = fakeAgent();
+  const p = await plan({ intent: "query", fromMs: new Date(2026, 7, 6, 0, 0).getTime(), toMs: new Date(2026, 7, 7, 0, 0).getTime() }, { agent, now: NOW });
+  assert.equal(p.kind, "query");
+  assert.equal(p.events.length, 3);
+  assert.equal(agent.calls.length, 0); // read only
+});
+
+test("plan find_slot → returns slots", async () => {
+  const agent = fakeAgent();
+  const p = await plan({ intent: "find_slot", durationMin: 30, fromMs: NOW, toMs: NOW + 7 * 86400000 }, { agent, now: NOW });
+  assert.equal(p.kind, "find_slot");
+  assert.equal(p.slots.length, 1);
+});
+
+test("plan reschedule (single match) preserves duration; commit patches start+end", async () => {
+  const agent = fakeAgent();
+  const intent = { intent: "reschedule", match: { titleHint: "standup" }, newStartMs: new Date(2026, 7, 6, 16, 0).getTime(), newEndMs: null, needsTime: false };
+  const p = await plan(intent, { agent, now: NOW });
+  assert.equal(p.target.id, "B");
+  assert.equal(p.needsConfirm, true);
+  // Standup is 15 min → new end is 16:15.
+  assert.equal(p.newEndMs, new Date(2026, 7, 6, 16, 15).getTime());
+  await commit(p, { agent });
+  const call = agent.calls.find((c) => c[0] === "update");
+  assert.equal(call[1].id, "B");
+  assert.equal(new Date(call[1].end).getTime(), new Date(2026, 7, 6, 16, 15).getTime());
+});
+
+test("plan reschedule ambiguous (two 2pm events, no model) → pick-list, no target", async () => {
+  const agent = fakeAgent();
+  const p = await plan({ intent: "reschedule", match: { timeHint: "2pm" }, newStartMs: new Date(2026, 7, 6, 16, 0).getTime() }, { agent, now: NOW });
+  assert.equal(p.candidates.length, 2); // Dentist + Lunch both at 14:00
+  assert.equal(p.target, null);
+  assert.equal(p.ambiguous, true);
+  assert.equal(p.needsConfirm, false);
+});
+
+test("plan cancel by title → target found; commit deletes", async () => {
+  const agent = fakeAgent();
+  const p = await plan({ intent: "cancel", match: { titleHint: "dentist" } }, { agent, now: NOW });
+  assert.equal(p.target.id, "A");
+  assert.equal(p.needsConfirm, true);
+  await commit(p, { agent });
+  assert.deepEqual(agent.calls.find((c) => c[0] === "delete")[1], { id: "A", calendarId: "cal1" });
+});
+
+test("plan cancel no match → notFound; commit refuses", async () => {
+  const agent = fakeAgent();
+  const p = await plan({ intent: "cancel", match: { titleHint: "nonexistent" } }, { agent, now: NOW });
+  assert.equal(p.notFound, true);
+  assert.equal(p.needsConfirm, false);
+  await assert.rejects(() => commit(p, { agent }), /nothing to cancel/);
+});
+
+test("resolveTargets narrows by title hint", async () => {
+  const { candidates } = await resolveTargets({ titleHint: "dentist" }, { agent: fakeAgent(), now: NOW });
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].title, "Dentist");
+});
+
+test("disambiguate uses the model over the candidate set, null without a model", async () => {
+  const cands = [{ id: "a", title: "Dentist" }, { id: "b", title: "Lunch" }];
+  assert.equal((await disambiguate(cands, "dentist", { talk: Talk.fake() })).id, "a");
+  assert.equal(await disambiguate(cands, "dentist", {}), null); // no model → pick-list
+});
+
+test("titleMatches tolerates leading article + multi-word hints", () => {
+  assert.equal(titleMatches({ title: "Dentist appointment" }, "the dentist"), true);
+  assert.equal(titleMatches({ title: "Team standup" }, "standup"), true);
+  assert.equal(titleMatches({ title: "Lunch" }, "dentist"), false);
 });

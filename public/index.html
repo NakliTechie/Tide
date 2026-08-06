@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-RikDrjEepsdkNbi1fKMSIWt9j434L4jWSPnzc6WKXSM=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-5LfW4SMtGrl1yUaXAW+Af8Bbgj6jr511eQoWWo+GFl4=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -2541,6 +2541,29 @@ If no duration is implied, make it 60 minutes. Phrase: ${JSON.stringify(text)}`;
           if (endLimit - c >= durMs) slots.push({ start: new Date(c).toISOString(), end: new Date(endLimit).toISOString() });
         }
         return slots;
+      },
+      // Reschedule/patch an existing event. PATCH semantics: only the fields
+      // passed are changed. calendarId comes from the event the caller resolved.
+      async updateEvent({ id, calendarId, start, end, title, description } = {}) {
+        await ensureCalendars();
+        if (!id) throw new Error("event id required");
+        const cal = state.calendars.find((c) => c.id === calendarId) || state.calendars.find((c) => c.primary) || state.calendars[0];
+        if (!cal) throw new Error("calendar not found");
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const resource = {};
+        if (title != null) resource.summary = title;
+        if (description != null) resource.description = description;
+        if (start != null) resource.start = { dateTime: new Date(start).toISOString(), timeZone: tz };
+        if (end != null) resource.end = { dateTime: new Date(end).toISOString(), timeZone: tz };
+        return normalizeEvent(await Api.updateEvent(Auth.byId(cal._connId), cal.id, id, resource), cal);
+      },
+      async deleteEvent({ id, calendarId } = {}) {
+        await ensureCalendars();
+        if (!id) throw new Error("event id required");
+        const cal = state.calendars.find((c) => c.id === calendarId);
+        if (!cal) throw new Error("calendar not found");
+        await Api.deleteEvent(Auth.byId(cal._connId), cal.id, id);
+        return { id, deleted: true };
       },
     },
   };
