@@ -356,6 +356,27 @@ test("plan cancel — no distinctive word matches → pick-list of that day (tit
   assert.deepEqual(p.candidates.map((e) => e.id).sort(), ["a", "b"]); // tomorrow's events to choose from
 });
 
+test("plan cancel — vague request (no distinctive word) → pick-list, never auto-target", async () => {
+  // "my meeting" names no specific event; tomorrow has several → the user picks.
+  const p = await plan({ intent: "cancel", raw: "cancel my meeting tomorrow", match: {} }, { agent: fakeAgent(), talk: Talk.fake(), now: NOW });
+  assert.equal(p.target, null);
+  assert.equal(p.titleMissed, true);
+  assert.ok(p.candidates.length > 1);
+});
+
+test("plan cancel — several title matches (two identical titles) → pick-list, not a guess", async () => {
+  const dupes = [
+    { id: "p1", calendarId: "c", title: "Daily admissions prep", start: localISO(2026, 7, 6, 16, 45), end: localISO(2026, 7, 6, 17, 0) },
+    { id: "p2", calendarId: "c", title: "Daily admissions prep", start: localISO(2026, 7, 6, 21, 30), end: localISO(2026, 7, 6, 21, 45) },
+    { id: "o", calendarId: "c", title: "Standup", start: localISO(2026, 7, 6, 9, 0), end: localISO(2026, 7, 6, 9, 15) },
+  ];
+  const agent = { async listEvents({ from, to }) { const f = +new Date(from), t = +new Date(to); return dupes.filter((e) => { const s = +new Date(e.start); return s >= f && s < t; }); } };
+  const p = await plan({ intent: "cancel", raw: "delete the daily admissions prep tomorrow", match: {} }, { agent, talk: Talk.fake(), now: NOW });
+  assert.equal(p.target, null);
+  assert.equal(p.titleMissed, true);
+  assert.deepEqual(p.candidates.map((e) => e.id).sort(), ["p1", "p2"]); // both prep events, Standup excluded
+});
+
 test("disambiguate uses the model over the candidate set, null without a model", async () => {
   const cands = [{ id: "a", title: "Dentist" }, { id: "b", title: "Lunch" }];
   assert.equal((await disambiguate(cands, "dentist", { talk: Talk.fake() })).id, "a");

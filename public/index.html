@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-ZE+Tr2uBQFNpI5XBEq0nQvJZaR34jGg1OGSOiaYWsuM=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-KkeN75ZV55cvNF+Ym97K7+CScqp+pzwyPTN/PRSVPSs=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -1430,11 +1430,15 @@
       }
       if (!dayEvents.length) dayEvents = all;
     }
-    // The DAY is deterministic; picking WHICH event on that day is the model's job
-    // (semantic match over this small set), so we return the day's events and let
-    // plan() ask the model. Nano is reliable once it only chooses within the
-    // correct day — its weakness is dates, which we've already pinned down.
-    return { dayEvents, anchored, windowFromMs: fromMs, windowToMs: toMs };
+    // Precise, SAFE title matching: the distinctive words from the phrase (generic
+    // words like "meeting"/"my" dropped). This is the primary matcher because it
+    // never over-picks — a vague request ("my meeting") yields no tokens, and an
+    // ambiguous one ("daily admissions prep", two of them) yields several. Nano is
+    // reserved for the semantic gap (tokens present but no literal hit), where
+    // plan() calls disambiguate() over these same dayEvents.
+    const tokens = [...new Set([...titleTokens(rawPhrase), ...titleTokens(match && match.titleHint)])];
+    const candidates = tokens.length ? dayEvents.filter((e) => { const t = String(e.title || "").toLowerCase(); return tokens.every((w) => t.includes(w)); }) : [];
+    return { candidates, dayEvents, anchored, hasTokens: tokens.length > 0, windowFromMs: fromMs, windowToMs: toMs };
   }
 
   // Ask the model to pick WHICH pre-filtered candidate (A5/I3). No model, or no
@@ -1471,24 +1475,28 @@
       // — split on "to" so only the target part ("move X") anchors the day/hour and
       // drives the match; the destination drives the new time (normalizeIntent).
       const targetText = intent.intent === "reschedule" ? String(intent.raw || "").split(/\bto\b/i)[0] : intent.raw;
-      const { dayEvents, anchored } = await resolveTargets(intent.match, ctx, targetText);
-      // Division of labour: the DAY is deterministic; the model picks WHICH event on
-      // that day (semantic — good at language, and it only ever sees the correct
-      // day's small set). One event → target; several → the model picks (or, if it
-      // can't confidently, a pick-list); none → notFound. Every result still
-      // requires an explicit confirm, so a wrong pick is caught before it lands.
-      let target = null, titleMissed = false;
-      if (anchored && dayEvents.length === 1) target = dayEvents[0]; // the only event on the named day
-      else if (dayEvents.length >= 1) {
-        target = await disambiguate(dayEvents, targetText, ctx); // model semantic-match
-        // Model unsure: offer a pick-list of the DAY (a specific day is a small,
-        // sensible list). With no day anchored, don't dump a 14-day window — that's
-        // an honest "couldn't find it", ask the user to name the day/event.
-        if (!target && anchored) titleMissed = true;
+      const { candidates, dayEvents, anchored, hasTokens } = await resolveTargets(intent.match, ctx, targetText);
+      // Auto-target ONLY on an unambiguous single match. Vague ("my meeting" → no
+      // tokens) or multiple matches ("daily admissions prep" → two) → a pick-list,
+      // never a guess. Tokens present but no literal hit → Nano semantic fallback
+      // (grounded to these events). Every result still requires an explicit confirm.
+      let target = null, list = dayEvents, titleMissed = false;
+      if (!hasTokens) {
+        // No distinctive word: only auto-target if the named day has exactly one
+        // event; otherwise the user picks (never infer which "meeting" they meant).
+        if (anchored && dayEvents.length === 1) target = dayEvents[0];
+        else if (anchored && dayEvents.length > 1) titleMissed = true;
+      } else if (candidates.length === 1) {
+        target = candidates[0];
+      } else if (candidates.length > 1) {
+        list = candidates; titleMissed = true; // several title matches → pick among them
+      } else {
+        target = await disambiguate(dayEvents, targetText, ctx); // semantic gap → the model, grounded
+        if (!target && anchored && dayEvents.length) titleMissed = true;
       }
-      const list = titleMissed ? dayEvents : (target ? [target] : []);
+      const finalList = titleMissed ? list : (target ? [target] : []);
       const out = {
-        kind: intent.intent, match: intent.match, candidates: list, target, titleMissed,
+        kind: intent.intent, match: intent.match, candidates: finalList, target, titleMissed,
         notFound: !target && !titleMissed,
         ambiguous: titleMissed,
       };
