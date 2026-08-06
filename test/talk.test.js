@@ -288,6 +288,10 @@ test("resolveTargets resolves a bare day word (tomorrow) to that day, not the 14
   const p = await plan({ intent: "cancel", match: { timeHint: "tomorrow", titleHint: "scrum" } }, { agent, now: NOW });
   assert.equal(p.target.id, "tmrw-scrum");
   assert.equal(p.needsConfirm, true);
+  // The model may resolve "tomorrow" to an absolute date — ISO or worded, both
+  // interpreted as the LOCAL day (Aug 6), never today.
+  assert.equal((await resolveTargets({ timeHint: "2026-08-06", titleHint: "scrum" }, { agent, now: NOW })).candidates[0].id, "tmrw-scrum");
+  assert.equal((await resolveTargets({ timeHint: "August 6, 2026", titleHint: "scrum" }, { agent, now: NOW })).candidates[0].id, "tmrw-scrum");
 });
 
 test("disambiguate uses the model over the candidate set, null without a model", async () => {

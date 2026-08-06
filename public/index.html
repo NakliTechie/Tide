@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-ICRGpcqnt756XytP1wKYbfilo2p0emi1yC5tLvgR6fc=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-CFy1ReAIyBbjxBbsge0e0mInzedr0K/K/GALNT8hEgY=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -1308,6 +1308,14 @@
     if (/\btoday\b|\btonight\b|\bthis (morning|afternoon|evening|week)\b/.test(c)) return base.getTime();
     const wd = WEEKDAYS.findIndex((n) => new RegExp(`\\b${n}s?\\b`, "i").test(c));
     if (wd >= 0) { let d = (wd - new Date(now).getDay() + 7) % 7; if (d === 0) d = 7; base.setDate(base.getDate() + d); return base.getTime(); }
+    // The model may have already resolved a relative word to an absolute date
+    // ("Aug 7", "2026-08-07"). Accept it if it lands in a sane window [-1, +366]
+    // days — bounded so a mis-parse (wrong year) is rejected, not acted on.
+    const inWindow = (ms) => { const days = Math.round((ms - base.getTime()) / 86400000); return days >= -1 && days <= 366 ? ms : null; };
+    const iso = c.match(/\b(\d{4})-(\d{2})-(\d{2})\b/); // parse ISO dates as LOCAL (Date.parse would treat them as UTC → off-by-one)
+    if (iso) return inWindow(new Date(+iso[1], +iso[2] - 1, +iso[3]).getTime());
+    const abs = Date.parse(text);
+    if (Number.isFinite(abs)) { const d = new Date(abs); d.setHours(0, 0, 0, 0); return inWindow(d.getTime()); }
     return null;
   }
 
@@ -2934,10 +2942,22 @@
     }, 180);
 
     function row(k, v) { return h("div", { class: "row" }, h("div", { class: "k", text: k }), h("div", { class: "v", text: v })); }
+    // Relative-day label so the confirm card makes the DAY unmissable — a
+    // resolved "Today" when you asked for "tomorrow" is now obvious, not buried
+    // in a date the eye skips.
+    function relDay(ms, now = Date.now()) {
+      const d0 = new Date(now); d0.setHours(0, 0, 0, 0);
+      const dd = new Date(ms); dd.setHours(0, 0, 0, 0);
+      const diff = Math.round((dd.getTime() - d0.getTime()) / 86400000);
+      if (diff === 0) return "Today";
+      if (diff === 1) return "Tomorrow";
+      if (diff === -1) return "Yesterday";
+      return new Date(ms).toLocaleDateString([], { weekday: "long" });
+    }
     function whenRange(startMs, endMs) {
       const s = new Date(startMs);
-      const d = s.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-      return endMs == null ? `${d}, ${fmtTime(s)}` : `${d}, ${fmtTime(s)} – ${fmtTime(new Date(endMs))}`;
+      const head = `${relDay(startMs)} · ${s.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}`;
+      return endMs == null ? `${head}, ${fmtTime(s)}` : `${head}, ${fmtTime(s)} – ${fmtTime(new Date(endMs))}`;
     }
 
     function renderPreview() {

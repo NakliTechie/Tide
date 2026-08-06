@@ -563,6 +563,14 @@ function resolveHintDay(text, now) {
   if (/\btoday\b|\btonight\b|\bthis (morning|afternoon|evening|week)\b/.test(c)) return base.getTime();
   const wd = WEEKDAYS.findIndex((n) => new RegExp(`\\b${n}s?\\b`, "i").test(c));
   if (wd >= 0) { let d = (wd - new Date(now).getDay() + 7) % 7; if (d === 0) d = 7; base.setDate(base.getDate() + d); return base.getTime(); }
+  // The model may have already resolved a relative word to an absolute date
+  // ("Aug 7", "2026-08-07"). Accept it if it lands in a sane window [-1, +366]
+  // days — bounded so a mis-parse (wrong year) is rejected, not acted on.
+  const inWindow = (ms) => { const days = Math.round((ms - base.getTime()) / 86400000); return days >= -1 && days <= 366 ? ms : null; };
+  const iso = c.match(/\b(\d{4})-(\d{2})-(\d{2})\b/); // parse ISO dates as LOCAL (Date.parse would treat them as UTC → off-by-one)
+  if (iso) return inWindow(new Date(+iso[1], +iso[2] - 1, +iso[3]).getTime());
+  const abs = Date.parse(text);
+  if (Number.isFinite(abs)) { const d = new Date(abs); d.setHours(0, 0, 0, 0); return inWindow(d.getTime()); }
   return null;
 }
 
