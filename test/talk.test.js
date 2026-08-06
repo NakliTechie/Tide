@@ -192,6 +192,9 @@ test("normalizeIntent — dates come from the phrase, not the model (create/quer
   // create: model puts "next tuesday" on Sunday Aug 9; the phrase resolves to Tue Aug 11 13:00.
   const c = normalizeIntent({ intent: "create", title: "Lunch", start: "2026-08-09T13:00:00+05:30" }, "lunch with sam next tuesday at 1pm", NOW);
   assert.deepEqual(formatLocalFields(c.startMs), { date: "11/08/2026", time: "13:00" });
+  // "next monday morning" (no explicit clock) → Mon Aug 10 09:00, not the model's Sunday.
+  const c2 = normalizeIntent({ intent: "create", title: "Deep work", start: "2026-08-09T08:00:00+05:30" }, "block 2 hours next monday morning for deep work", NOW);
+  assert.deepEqual(formatLocalFields(c2.startMs), { date: "10/08/2026", time: "09:00" });
   // query: "next week" → Mon Aug 10 – Mon Aug 17, not the model's from/to.
   const q = normalizeIntent({ intent: "query", from: "2026-08-07T00:00:00+05:30", to: "2026-08-13T00:00:00+05:30" }, "what's on next week?", NOW);
   assert.deepEqual(formatLocalFields(q.fromMs), { date: "10/08/2026", time: "00:00" });

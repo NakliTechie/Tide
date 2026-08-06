@@ -138,6 +138,9 @@ export function resolveRelativeTime(text, now = Date.now()) {
   if (clockMatch) clock = parseClock(clockMatch[1], clockMatch[2], clockMatch[3]);
   else if (/\bnoon\b/i.test(command)) clock = { hour: 12, minute: 0 };
   else if (/\bmidnight\b/i.test(command)) clock = { hour: 0, minute: 0 };
+  else if (/\bmorning\b/i.test(command)) clock = { hour: 9, minute: 0 };   // default hours so a
+  else if (/\bafternoon\b/i.test(command)) clock = { hour: 14, minute: 0 }; // day+part-of-day phrase
+  else if (/\b(evening|tonight)\b/i.test(command)) clock = { hour: 18, minute: 0 }; // resolves deterministically
   if (!clock) return null;
 
   const base = new Date(now);
