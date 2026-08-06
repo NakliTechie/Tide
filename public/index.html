@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-0/7dFQmP54QIitfQ4OaweIQPAf673sL+MrBj30xPLL0=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-tJ+lKIbXQvRAxvS4MBVwJXVmQPo3eSgQcyACmaGy8sw=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -321,6 +321,8 @@
     .cmd-wrap { display: flex; align-items: center; padding-left: 16px; border-bottom: 1px solid var(--border); }
     .cmd-wrap svg { color: var(--text-faint); flex: 0 0 auto; }
     .cmd-preview { padding: 14px 18px; }
+    .cmd-enable { padding: 8px 18px 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .cmd-enable:empty { display: none; }
     .cmd-preview .row { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; }
     .cmd-preview .k { width: 72px; color: var(--text-faint); font-size: 12px; flex: 0 0 auto; }
     .cmd-preview .v { font-weight: 550; }
@@ -2823,33 +2825,80 @@
       h("span", {}, "Press ", h("span", { class: "kbd", text: "Enter" }), " to confirm · ", h("span", { class: "kbd", text: "Esc" }), " to close"));
     const confirmBtn = h("button", { class: "btn primary", text: "Confirm", disabled: true });
 
+    // On-device NL availability line (A6). Sits above the preview.
+    const enableRow = h("div", { class: "cmd-enable" });
+
     const modal = h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": "Command bar", tabindex: "-1" },
       h("div", { class: "cmd-wrap" }, h("span", { html: ICON.search }), input),
-      preview, hint,
+      enableRow, preview, hint,
       h("div", { class: "modal-foot" }, tierEl, h("div", { style: { flex: 1 } }),
         (() => { const c = h("button", { class: "btn ghost", text: "Cancel" }); c.addEventListener("click", closeModal); return c; })(),
         confirmBtn),
     );
 
-    // Command palette: a few exact keywords short-circuit event parsing.
+    // Command palette: a few exact keywords short-circuit parsing (A2 fast-path).
     const COMMANDS = [
       { keys: ["settings", "preferences", "prefs"], label: "⚙ Open Settings", run: openSettings },
       { keys: ["notifications", "alerts", "inbox"], label: "🔔 Open notifications", run: openNotifPanel },
       { keys: ["help"], label: "? Open Help", run: openHelp },
     ];
     const matchCommand = (text) => { const k = text.trim().toLowerCase(); return k ? (COMMANDS.find((c) => c.keys.includes(k)) || null) : null; };
-    let parsed = null;
-    let command = null;
+    let parsed = null;     // legacy create-ladder result
+    let command = null;    // palette match
+    let talkPlan = null;   // on-device Talk dispatch result (all five intents)
     let parseSeq = 0;
     const liveRegion = h("div", { class: "visually-hidden", "aria-live": "polite" });
     modal.append(liveRegion);
 
+    // Talk (on-device NL). Enhancement layer (I1): if the model is unavailable
+    // the legacy parse ladder below runs unchanged (create-only). When available,
+    // Talk parses the full intent set and the model never sees more than the
+    // candidate set the dispatch layer pre-filters (I3/A5).
+    let talkState = "unavailable";
+    let talkBackend = null;
+    const talk = () => (talkBackend || (talkBackend = TalkMod.Talk.real()));
+
+    function renderEnable() {
+      enableRow.replaceChildren();
+      if (talkState === "available") { input.placeholder = "Ask Tide — move my 2pm to 4pm · what's on tomorrow · lunch with Sam 1pm"; return; }
+      if (talkState === "downloadable" || talkState === "downloading") {
+        const btn = h("button", { class: "btn ghost small", text: "Enable on-device AI" });
+        const prog = h("span", { class: "muted small" });
+        btn.addEventListener("click", async () => {
+          btn.disabled = true; btn.textContent = "Downloading…";
+          try {
+            await TalkMod.acquireLanguageModel((pct) => { prog.textContent = " " + pct + "%"; });
+            talkState = await TalkMod.probeAvailability();
+            renderEnable();
+            if (input.value.trim()) doParse(input.value);
+          } catch (e) { btn.disabled = false; btn.textContent = "Enable on-device AI"; prog.textContent = " — unavailable"; }
+        });
+        enableRow.append(h("span", { class: "muted small", text: "On-device natural language is available. " }), btn, prog);
+      }
+    }
+
     const doParse = debounce(async (text) => {
       const seq = ++parseSeq;
+      parsed = null; talkPlan = null;
       command = matchCommand(text);
-      if (command) { parsed = null; tierEl.textContent = "command"; renderPreview(); return; }
-      if (!text.trim()) { parsed = null; renderPreview(); return; }
+      if (command) { tierEl.textContent = "command"; renderPreview(); return; }
+      if (!text.trim()) { renderPreview(); return; }
       tierEl.textContent = "parsing…";
+      if (talkState === "available") {
+        try {
+          const intent = await talk().parse(text);
+          if (seq !== parseSeq) return;
+          if (intent) {
+            const p = await TalkMod.plan(intent, { agent: window.tide.agent, talk: talk(), now: Date.now() });
+            if (seq !== parseSeq) return;
+            talkPlan = p; tierEl.textContent = "on-device AI"; renderPreview(); return;
+          }
+          tierEl.textContent = "on-device AI";
+        } catch (e) {
+          if (seq !== parseSeq) return;
+          console.warn("Talk parse failed; using the deterministic floor", e);
+        }
+      }
       try {
         const r = await parseEvent(text);
         if (seq !== parseSeq) return;
@@ -2861,18 +2910,24 @@
       renderPreview();
     }, 180);
 
+    function row(k, v) { return h("div", { class: "row" }, h("div", { class: "k", text: k }), h("div", { class: "v", text: v })); }
+    function whenRange(startMs, endMs) {
+      const s = new Date(startMs);
+      const d = s.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+      return endMs == null ? `${d}, ${fmtTime(s)}` : `${d}, ${fmtTime(s)} – ${fmtTime(new Date(endMs))}`;
+    }
+
     function renderPreview() {
       preview.replaceChildren();
-      if (command) {
-        confirmBtn.disabled = false;
-        confirmBtn.textContent = "Open";
-        preview.append(row("Command", command.label));
-        return;
-      }
+      confirmBtn.classList.remove("danger");
+      if (command) { confirmBtn.disabled = false; confirmBtn.textContent = "Open"; preview.append(row("Command", command.label)); return; }
+      if (talkPlan) { renderTalkPreview(talkPlan); return; }
       confirmBtn.textContent = "Confirm";
       if (!parsed) {
         confirmBtn.disabled = true;
-        preview.append(h("div", { class: "muted small", text: "Type a meeting in plain words — or a command like “settings”. A confirm step always precedes any write." }));
+        preview.append(h("div", { class: "muted small", text: talkState === "available"
+          ? "Ask in plain words — create, move, cancel, or ask what's on. A confirm step precedes any change."
+          : "Type a meeting in plain words — or a command like “settings”. A confirm step always precedes any write." }));
         return;
       }
       confirmBtn.disabled = false;
@@ -2880,24 +2935,90 @@
       const whenStr = parsed.allDay
         ? parsed.start.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) + " · all day"
         : `${parsed.start.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}, ${fmtTime(parsed.start)} – ${fmtTime(parsed.end)}`;
-      preview.append(
-        row("Title", parsed.title || "(untitled)"),
-        row("When", whenStr),
-        row("Calendar", cal ? cal.summary : "(default)"),
-      );
+      preview.append(row("Title", parsed.title || "(untitled)"), row("When", whenStr), row("Calendar", cal ? cal.summary : "(default)"));
       liveRegion.textContent = `Parsed: ${parsed.title}, ${whenStr}`;
-      function row(k, v) { return h("div", { class: "row" }, h("div", { class: "k", text: k }), h("div", { class: "v", text: v })); }
+    }
+
+    // Renders the on-device plan per kind. Reads (query/find_slot) show their
+    // answer inline; mutations stage a confirm. Ambiguity → a pick-list; a
+    // destructive cancel requires an explicit click, never Enter (A5/I4).
+    function renderTalkPreview(p) {
+      if (p.kind === "create") {
+        confirmBtn.textContent = "Create";
+        if (p.needsTime || p.draft.startMs == null) {
+          confirmBtn.disabled = true;
+          preview.append(row("Create", p.draft.title || "(untitled)"), h("div", { class: "muted small", text: "No time understood — add one, e.g. “tomorrow 3pm”." }));
+          return;
+        }
+        confirmBtn.disabled = false;
+        preview.append(row("Create", p.draft.title || "(untitled)"), row("When", whenRange(p.draft.startMs, p.draft.endMs)));
+        liveRegion.textContent = `Create ${p.draft.title}`;
+        return;
+      }
+      if (p.kind === "query") {
+        confirmBtn.textContent = "Done"; confirmBtn.disabled = false;
+        const evs = p.events || [];
+        if (!evs.length) preview.append(h("div", { class: "muted small", text: "Nothing on your calendar in that range." }));
+        else evs.slice(0, 8).forEach((e) => preview.append(row(fmtTime(new Date(e.start)), e.title)));
+        return;
+      }
+      if (p.kind === "find_slot") {
+        confirmBtn.textContent = "Done"; confirmBtn.disabled = false;
+        const slots = p.slots || [];
+        if (!slots.length) preview.append(h("div", { class: "muted small", text: `No ${p.durationMin}-min opening in that window.` }));
+        else slots.slice(0, 8).forEach((s) => preview.append(row(new Date(s.start).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }), `${fmtTime(new Date(s.start))} – ${fmtTime(new Date(s.end))}`)));
+        return;
+      }
+      if (p.kind === "reschedule" || p.kind === "cancel") {
+        if (p.notFound) { confirmBtn.disabled = true; preview.append(h("div", { class: "muted small", text: "Couldn't find that event." })); return; }
+        if (p.ambiguous) {
+          confirmBtn.disabled = true;
+          preview.append(h("div", { class: "muted small", text: "Which one?" }));
+          p.candidates.slice(0, 6).forEach((e) => {
+            const b = h("button", { class: "btn ghost small", style: { display: "block", width: "100%", textAlign: "left", marginTop: "4px" }, text: `${fmtTime(new Date(e.start))} · ${e.title}` });
+            b.addEventListener("click", () => {
+              const chosen = { ...p, target: e, ambiguous: false, needsConfirm: true };
+              if (p.kind === "reschedule") {
+                if (p.newStartMs == null) chosen.needsConfirm = false;
+                else { const dur = new Date(e.end).getTime() - new Date(e.start).getTime(); chosen.newEndMs = p.newStartMs + (dur > 0 ? dur : 3600000); }
+              }
+              talkPlan = chosen; renderPreview();
+            });
+            preview.append(b);
+          });
+          return;
+        }
+        const t = p.target;
+        if (p.kind === "cancel") {
+          confirmBtn.textContent = "Cancel event"; confirmBtn.classList.add("danger"); confirmBtn.disabled = false;
+          preview.append(row("Cancel", t.title), row("When", whenRange(new Date(t.start).getTime(), new Date(t.end).getTime())),
+            h("div", { class: "muted small", text: "Click “Cancel event” to confirm — Enter won't delete." }));
+        } else {
+          confirmBtn.textContent = "Move";
+          if (p.newStartMs == null) { confirmBtn.disabled = true; preview.append(row("Move", t.title), h("div", { class: "muted small", text: "No new time understood." })); return; }
+          confirmBtn.disabled = false;
+          preview.append(row("Move", t.title), row("From", whenRange(new Date(t.start).getTime(), new Date(t.end).getTime())), row("To", whenRange(p.newStartMs, p.newEndMs)));
+        }
+        return;
+      }
+      confirmBtn.disabled = true;
+      preview.append(h("div", { class: "muted small", text: "Didn't catch that — try rephrasing." }));
     }
 
     input.addEventListener("input", () => doParse(input.value));
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); commit(); }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (talkPlan && talkPlan.kind === "cancel") return; // destructive: explicit click only (A5)
+        commit();
+      }
     });
     confirmBtn.addEventListener("click", commit);
 
     async function commit() {
       const cmd = command || matchCommand(input.value);
       if (cmd) { closeModal(); cmd.run(); return; }
+      if (talkPlan) { await commitTalk(talkPlan); return; }
       if (!parsed) return;
       if (!confirmWrite()) return;
       const cal = (parsed.calendarId && state.calendars.find((c) => c.id === parsed.calendarId))
@@ -2919,8 +3040,26 @@
       }
     }
 
+    async function commitTalk(p) {
+      if (p.kind === "query" || p.kind === "find_slot") { closeModal(); return; } // reads: nothing to write
+      if (!p.needsConfirm || p.notFound || p.ambiguous || p.kind === "unknown") return;
+      if (!confirmWrite()) return;
+      const old = confirmBtn.textContent;
+      confirmBtn.disabled = true; confirmBtn.textContent = "Working…";
+      try {
+        await TalkMod.commit(p, { agent: window.tide.agent });
+        toast(p.kind === "cancel" ? "Event cancelled" : p.kind === "reschedule" ? "Event moved" : `Created “${p.draft.title}”`);
+        closeModal();
+        await loadEvents();
+      } catch (err) {
+        confirmBtn.disabled = false; confirmBtn.textContent = old;
+        toast("Failed: " + (err.status || err.message), "err");
+      }
+    }
+
     openModal(modal);
     renderPreview();
+    (async () => { try { talkState = await TalkMod.probeAvailability(); renderEnable(); } catch {} })();
   }
 
   function debounce(fn, ms) {
