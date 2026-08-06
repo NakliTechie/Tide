@@ -220,7 +220,8 @@ export function buildParsePrompt(text, time = buildTimeContext()) {
     "Rules: creating/booking/blocking time → create. A question about the schedule",
     "(what is on, am I free, how many meetings) → query. Asking to find or suggest a",
     "free slot → find_slot. Moving/rescheduling an existing event →",
-    "reschedule. Cancelling/clearing/deleting → cancel. For reschedule/cancel give",
+    "reschedule. Cancelling/clearing/removing/deleting an event → cancel (an",
+    "imperative like “remove/delete/cancel X” is an action, never a question). For reschedule/cancel give",
     "timeHint/titleHint that identify the target; do NOT invent an event id — Tide",
     "resolves the actual event itself. Resolve all relative times against the",
     "current instant below. Every datetime MUST include the numeric UTC offset",
@@ -551,25 +552,46 @@ export function titleMatches(ev, hint) {
 // from the time hint (the hinted day, else the next 14 days), then narrow by the
 // hinted clock hour and by the title hint. Returns { candidates, windowFromMs,
 // windowToMs }. The model never sees the whole calendar — only this candidate set.
+// Resolve a bare day word ("tomorrow", "today"/"tonight", a weekday) to that
+// day's start-of-day, independent of any clock. resolveRelativeTime needs a
+// clock time to return anything, so a day-only hint like "tomorrow" would
+// otherwise be null and the window would wrongly widen to the next 14 days.
+function resolveHintDay(text, now) {
+  const c = String(text || "").toLowerCase();
+  const base = new Date(now); base.setHours(0, 0, 0, 0);
+  if (/\btomorrow\b/.test(c)) { base.setDate(base.getDate() + 1); return base.getTime(); }
+  if (/\btoday\b|\btonight\b|\bthis (morning|afternoon|evening|week)\b/.test(c)) return base.getTime();
+  const wd = WEEKDAYS.findIndex((n) => new RegExp(`\\b${n}s?\\b`, "i").test(c));
+  if (wd >= 0) { let d = (wd - new Date(now).getDay() + 7) % 7; if (d === 0) d = 7; base.setDate(base.getDate() + d); return base.getTime(); }
+  return null;
+}
+
 export async function resolveTargets(match, ctx) {
   const now = ctx.now ?? Date.now();
-  const hintMs = match && match.timeHint ? resolveRelativeTime(match.timeHint, now) : null;
-  const fromMs = hintMs != null ? startOfLocalDay(hintMs) : startOfLocalDay(now);
-  const toMs = hintMs != null ? fromMs + DAY_MS : fromMs + 14 * DAY_MS;
+  const hint = match && match.timeHint ? String(match.timeHint) : "";
+  const clockMs = hint ? resolveRelativeTime(hint, now) : null; // a precise instant (hint carries a clock)
+  const dayMs = hint ? resolveHintDay(hint, now) : null;        // a bare day word
+  const anchorMs = clockMs != null ? clockMs : dayMs;
+  const fromMs = anchorMs != null ? startOfLocalDay(anchorMs) : startOfLocalDay(now);
+  const toMs = anchorMs != null ? fromMs + DAY_MS : fromMs + 14 * DAY_MS;
   const events = await ctx.agent.listEvents({ from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() });
   let cands = Array.isArray(events) ? events.slice() : [];
-  if (hintMs != null) {
-    const hintHour = new Date(hintMs).getHours();
-    const byHour = cands.filter((e) => { const s = new Date(e.start); return sameLocalDay(s.getTime(), hintMs) && s.getHours() === hintHour; });
-    const byDay = cands.filter((e) => sameLocalDay(new Date(e.start).getTime(), hintMs));
-    cands = byHour.length ? byHour : (byDay.length ? byDay : cands);
+  if (anchorMs != null) {
+    const byDay = cands.filter((e) => sameLocalDay(new Date(e.start).getTime(), anchorMs));
+    if (clockMs != null) {
+      const hh = new Date(clockMs).getHours();
+      const byHour = byDay.filter((e) => new Date(e.start).getHours() === hh);
+      cands = byHour.length ? byHour : (byDay.length ? byDay : cands);
+    } else {
+      cands = byDay.length ? byDay : cands; // day-only hint → that whole day
+    }
   }
   if (match && match.titleHint) {
     const narrowed = cands.filter((e) => titleMatches(e, match.titleHint));
     // Title is authoritative when it's the only signal (may narrow to 0 →
-    // notFound); with a time hint anchoring the window, only apply the title
+    // notFound); with a day/time hint anchoring the window, only apply the title
     // filter if it matched something (the hint may be imperfect).
-    if (narrowed.length || hintMs == null) cands = narrowed;
+    if (narrowed.length || anchorMs == null) cands = narrowed;
   }
   return { candidates: cands, windowFromMs: fromMs, windowToMs: toMs };
 }

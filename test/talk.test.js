@@ -272,6 +272,24 @@ test("resolveTargets narrows by title hint", async () => {
   assert.equal(candidates[0].title, "Dentist");
 });
 
+test("resolveTargets resolves a bare day word (tomorrow) to that day, not the 14-day window", async () => {
+  // A scrum today (Aug 5) AND tomorrow (Aug 6). "tomorrow's scrum" must pick tomorrow's.
+  const twoScrums = [
+    { id: "today-scrum", calendarId: "cal1", title: "Scrum", start: localISO(2026, 7, 5, 9, 0), end: localISO(2026, 7, 5, 9, 15) },
+    { id: "tmrw-scrum", calendarId: "cal1", title: "Scrum", start: localISO(2026, 7, 6, 9, 0), end: localISO(2026, 7, 6, 9, 15) },
+  ];
+  const agent = {
+    async listEvents({ from, to }) { const f = +new Date(from), t = +new Date(to); return twoScrums.filter((e) => { const s = +new Date(e.start); return s >= f && s < t; }); },
+  };
+  const { candidates } = await resolveTargets({ timeHint: "tomorrow", titleHint: "scrum" }, { agent, now: NOW });
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].id, "tmrw-scrum");
+  // And a cancel plan resolves it to a single confirmable target.
+  const p = await plan({ intent: "cancel", match: { timeHint: "tomorrow", titleHint: "scrum" } }, { agent, now: NOW });
+  assert.equal(p.target.id, "tmrw-scrum");
+  assert.equal(p.needsConfirm, true);
+});
+
 test("disambiguate uses the model over the candidate set, null without a model", async () => {
   const cands = [{ id: "a", title: "Dentist" }, { id: "b", title: "Lunch" }];
   assert.equal((await disambiguate(cands, "dentist", { talk: Talk.fake() })).id, "a");
