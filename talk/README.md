@@ -37,12 +37,15 @@ tide/
 - [x] Q5 — Safe mutation → app resolves + preview/confirm covenant
 - [x] Q6 — Availability → probe → progressive affordance
 
-**Build status:**
+**Build status** (all on `talkv1`, node suite 30/30):
 - [x] Spec scaffolded
-- [ ] Phase 1 — the seam (LanguageModelSeam real/fake, time context, intent schema)
-- [ ] Phase 2 — agent-face completeness (create/reschedule/cancel/query/find-slot)
-- [ ] Phase 3 — the ⌘K command-bar surface + preview/confirm card
-- [ ] Phase 4 — polish (find-slot rendering, day-summary, states)
+- [x] Phase 1 — the seam (`Talk.real()`/`Talk.fake()`, time context, intent schema) — `63b10c8`
+- [x] Phase 2 — dispatch + agent-face create/reschedule/cancel/query/find-slot — `c750655`
+- [x] Phase 3a — inline-build mechanism (single-file preserved) — `37f6f1d`
+- [x] Phase 3b — ⌘K surface: NL entry + preview/confirm card + availability — `83bdc62`
+- [~] Phase 4 — polish: find-slot rendering + states done; model-written day summaries deferred (see DEFERRED)
+
+**Remaining (dev-process):** Stage 6 security sweep · Stage 7 frontend walkthrough (needs a connected account + the downloaded model — owner `[test]`).
 
 See [SPEC.md §"Build sequence"](SPEC.md) for the ordered steps.
 
