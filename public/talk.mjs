@@ -352,7 +352,9 @@ export function normalizeIntent(parsed, rawText, now = Date.now()) {
   if (!intent) return null;
 
   if (intent === "create") {
-    const startMs = resolveField(parsed.start, raw, now);
+    // Deterministic date FIRST (the model puts "next tuesday" on a Sunday); the
+    // model's ISO is only a fallback for phrasings the parser can't resolve.
+    const startMs = resolveRelativeTime(raw, now) ?? isoWithOffsetToMs(parsed.start);
     const endMs = isoWithOffsetToMs(parsed.end);
     return {
       intent, raw,
@@ -366,18 +368,23 @@ export function normalizeIntent(parsed, rawText, now = Date.now()) {
   }
 
   if (intent === "query") {
-    let fromMs = isoWithOffsetToMs(parsed.from);
-    let toMs = isoWithOffsetToMs(parsed.to);
-    if (fromMs == null) fromMs = startOfLocalDay(now);      // default: today…
-    if (toMs == null || toMs <= fromMs) toMs = fromMs + DAY_MS; // …to end of that day
+    // Deterministic range from the phrase FIRST ("next week" → Mon–Sun), model's
+    // from/to only as a fallback, then a today default.
+    const r = resolveRange(raw, now);
+    let fromMs = r ? r.fromMs : isoWithOffsetToMs(parsed.from);
+    let toMs = r ? r.toMs : isoWithOffsetToMs(parsed.to);
+    if (fromMs == null) fromMs = startOfLocalDay(now);
+    if (toMs == null || toMs <= fromMs) toMs = fromMs + DAY_MS;
     return { intent, raw, fromMs, toMs };
   }
 
   if (intent === "find_slot") {
-    const durationMin = Number.isFinite(parsed.durationMin) && parsed.durationMin > 0 ? Math.round(parsed.durationMin) : 30;
-    let fromMs = isoWithOffsetToMs(parsed.from) ?? now;
-    let toMs = isoWithOffsetToMs(parsed.to);
-    if (toMs == null || toMs <= fromMs) toMs = fromMs + 7 * DAY_MS; // default window: a week
+    const durationMin = resolveDurationMin(raw) ?? (Number.isFinite(parsed.durationMin) && parsed.durationMin > 0 ? Math.round(parsed.durationMin) : 30);
+    const r = resolveRange(raw, now); // "tomorrow afternoon" → Fri 12:00–18:00, not a 7-day sprawl
+    let fromMs = r ? r.fromMs : (isoWithOffsetToMs(parsed.from) ?? now);
+    let toMs = r ? r.toMs : isoWithOffsetToMs(parsed.to);
+    if (fromMs == null) fromMs = now;
+    if (toMs == null || toMs <= fromMs) toMs = fromMs + 7 * DAY_MS;
     return { intent, raw, durationMin, fromMs, toMs, withHint: cleanStr(parsed.withHint, 120) };
   }
 
@@ -607,6 +614,43 @@ function resolveHintDay(text, now) {
   const abs = Date.parse(text);
   if (Number.isFinite(abs)) { const d = new Date(abs); d.setHours(0, 0, 0, 0); return inWindow(d.getTime()); }
   return null;
+}
+
+// Deterministic date-RANGE resolution for query/find_slot windows — the model
+// gets relative ranges wrong the same way it gets days wrong ("next week" →
+// Fri–Thu, "next monday" → a 4-day span). Returns { fromMs, toMs } or null.
+// Handles today/tonight, tomorrow, this/next week, this/next month, weekend, a
+// weekday, and narrows to morning/afternoon/evening for a single day.
+export function resolveRange(text, now = Date.now()) {
+  const c = String(text || "").toLowerCase();
+  const d0 = new Date(now); d0.setHours(0, 0, 0, 0);
+  const startOfDay = (ms) => { const x = new Date(ms); x.setHours(0, 0, 0, 0); return x.getTime(); };
+  const mondayOfWeek = () => { const dow = (new Date(now).getDay() + 6) % 7; return startOfDay(d0.getTime() - dow * DAY_MS); }; // Mon=0
+  let range = null;
+  if (/\bnext week\b/.test(c)) { const m = mondayOfWeek(); range = [m + 7 * DAY_MS, m + 14 * DAY_MS]; }
+  else if (/\bthis week\b/.test(c)) { const m = mondayOfWeek(); range = [m, m + 7 * DAY_MS]; }
+  else if (/\b(this )?weekend\b/.test(c)) { const dow = new Date(now).getDay(); const sat = startOfDay(d0.getTime() + ((6 - dow + 7) % 7) * DAY_MS); range = [sat, sat + 2 * DAY_MS]; }
+  else if (/\bnext month\b/.test(c)) { const n = new Date(now); range = [new Date(n.getFullYear(), n.getMonth() + 1, 1).getTime(), new Date(n.getFullYear(), n.getMonth() + 2, 1).getTime()]; }
+  else if (/\bthis month\b/.test(c)) { const n = new Date(now); range = [new Date(n.getFullYear(), n.getMonth(), 1).getTime(), new Date(n.getFullYear(), n.getMonth() + 1, 1).getTime()]; }
+  else { const dm = resolveHintDay(c, now); if (dm != null) range = [dm, dm + DAY_MS]; }
+  if (!range) return null;
+  let [from, to] = range;
+  // Time-of-day narrowing only makes sense within a single day.
+  if (to - from <= DAY_MS) {
+    const setH = (base, h) => base + h * 3600000;
+    if (/\bmorning\b/.test(c)) { from = setH(from, 6); to = setH(from - 6 * 3600000, 12); }
+    else if (/\bafternoon\b/.test(c)) { const day = from; from = setH(day, 12); to = setH(day, 18); }
+    else if (/\b(evening|tonight)\b/.test(c)) { const day = from; from = setH(day, 17); to = setH(day, 22); }
+  }
+  return { fromMs: from, toMs: to };
+}
+
+// Duration in minutes from free text ("30 minutes", "an hour", "1.5 hrs").
+export function resolveDurationMin(text) {
+  const m = String(text || "").toLowerCase().match(/(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m)\b/);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  return /^h/.test(m[2]) ? Math.round(n * 60) : Math.round(n);
 }
 
 // Resolve which existing event(s) a reschedule/cancel refers to (A5). The DAY is

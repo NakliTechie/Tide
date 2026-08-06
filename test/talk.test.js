@@ -5,6 +5,7 @@ import {
   normalizeIntent, extractJson, buildParsePrompt, buildEventSummaryPrompt, buildDisambiguationPrompt,
   normalizeChosenId, normalizeSummary, UNTRUSTED_RULES, Talk,
   plan, commit, resolveTargets, disambiguate, titleMatches,
+  resolveRange, resolveDurationMin,
 } from "../public/talk.mjs";
 
 // A fixed "now": Wed 2026-08-05, 17:00 local. Assertions go through
@@ -170,6 +171,36 @@ test("normalizeChosenId — only ids in the candidate set survive", () => {
 test("normalizeSummary — bounded string or null", () => {
   assert.deepEqual(normalizeSummary({ answer: "  You have 3 meetings.  " }), { answer: "You have 3 meetings." });
   assert.deepEqual(normalizeSummary({}), { answer: null });
+});
+
+// NOW = Wed 2026-08-05 17:00 (Aug 6 is a Thursday, so Aug 5 is a Wednesday).
+test("resolveRange — relative ranges the model gets wrong", () => {
+  assert.deepEqual(resolveRange("tomorrow", NOW), { fromMs: new Date(2026, 7, 6, 0, 0).getTime(), toMs: new Date(2026, 7, 7, 0, 0).getTime() });
+  assert.deepEqual(resolveRange("this week", NOW), { fromMs: new Date(2026, 7, 3, 0, 0).getTime(), toMs: new Date(2026, 7, 10, 0, 0).getTime() });   // Mon Aug 3 – Mon Aug 10
+  assert.deepEqual(resolveRange("next week", NOW), { fromMs: new Date(2026, 7, 10, 0, 0).getTime(), toMs: new Date(2026, 7, 17, 0, 0).getTime() });  // Mon Aug 10 – Mon Aug 17
+  assert.deepEqual(resolveRange("next month", NOW), { fromMs: new Date(2026, 8, 1, 0, 0).getTime(), toMs: new Date(2026, 9, 1, 0, 0).getTime() });   // Sep
+  assert.deepEqual(resolveRange("tomorrow afternoon", NOW), { fromMs: new Date(2026, 7, 6, 12, 0).getTime(), toMs: new Date(2026, 7, 6, 18, 0).getTime() });
+});
+
+test("resolveDurationMin — from free text", () => {
+  assert.equal(resolveDurationMin("find 30 minutes"), 30);
+  assert.equal(resolveDurationMin("block 2 hours"), 120);
+  assert.equal(resolveDurationMin("a quick sync"), null);
+});
+
+test("normalizeIntent — dates come from the phrase, not the model (create/query/find_slot)", () => {
+  // create: model puts "next tuesday" on Sunday Aug 9; the phrase resolves to Tue Aug 11 13:00.
+  const c = normalizeIntent({ intent: "create", title: "Lunch", start: "2026-08-09T13:00:00+05:30" }, "lunch with sam next tuesday at 1pm", NOW);
+  assert.deepEqual(formatLocalFields(c.startMs), { date: "11/08/2026", time: "13:00" });
+  // query: "next week" → Mon Aug 10 – Mon Aug 17, not the model's from/to.
+  const q = normalizeIntent({ intent: "query", from: "2026-08-07T00:00:00+05:30", to: "2026-08-13T00:00:00+05:30" }, "what's on next week?", NOW);
+  assert.deepEqual(formatLocalFields(q.fromMs), { date: "10/08/2026", time: "00:00" });
+  assert.deepEqual(formatLocalFields(q.toMs), { date: "17/08/2026", time: "00:00" });
+  // find_slot: "tomorrow afternoon" window + "30 minutes" duration from the phrase.
+  const f = normalizeIntent({ intent: "find_slot", durationMin: 60, from: "2026-08-07T09:00:00+05:30" }, "find me 30 minutes tomorrow afternoon", NOW);
+  assert.equal(f.durationMin, 30);
+  assert.deepEqual(formatLocalFields(f.fromMs), { date: "06/08/2026", time: "12:00" });
+  assert.deepEqual(formatLocalFields(f.toMs), { date: "06/08/2026", time: "18:00" });
 });
 
 // ---- Phase 2: dispatch (plan/commit) against a fake agent ---------------
