@@ -548,6 +548,32 @@ export function titleMatches(ev, hint) {
   return words.length > 0 && words.every((w) => t.includes(w));
 }
 
+// Words that carry no title signal — actions, relative-day/time context, generic
+// calendar nouns, connectors. Stripped so "delete tomorrow's shop meeting" keys
+// on the DISTINCTIVE word "shop", which is what identifies the event.
+const STOP_WORDS = new Set([
+  "delete", "cancel", "remove", "drop", "move", "reschedule", "shift", "push", "change", "clear",
+  "create", "add", "book", "schedule", "new", "set", "setup", "make", "put",
+  "tomorrow", "today", "tonight", "yesterday", "this", "next", "last", "morning", "afternoon",
+  "evening", "night", "week", "weekend", "day", "sunday", "monday", "tuesday", "wednesday",
+  "thursday", "friday", "saturday",
+  "meeting", "meet", "event", "events", "appointment", "appt", "call", "sync", "session",
+  "catchup", "catch", "invite", "block", "slot", "time",
+  "the", "my", "an", "and", "for", "with", "about", "please", "reminder", "remind",
+]);
+
+// Distinctive title words from free text — lowercased, punctuation and possessive
+// stripped, stop-words and clock/number tokens dropped. "delete tomorrow's shop
+// meeting" → ["shop"]; "move my 2pm to 4pm" → [] (no title, just a time).
+export function titleTokens(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/['’]s\b/g, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w) && !/^\d/.test(w));
+}
+
 // Deterministic candidate resolution (A5): fetch events over a window derived
 // from the time hint (the hinted day, else the next 14 days), then narrow by the
 // hinted clock hour and by the title hint. Returns { candidates, windowFromMs,
@@ -603,7 +629,13 @@ export async function resolveTargets(match, ctx, rawPhrase = "") {
     }
     if (!dayEvents.length) dayEvents = all;
   }
-  const candidates = match && match.titleHint ? dayEvents.filter((e) => titleMatches(e, match.titleHint)) : dayEvents;
+  // Distinctive title words from what the user TYPED (the model's titleHint is
+  // unreliable and often null — the raw phrase always has the words). An event
+  // is a candidate when its title contains every distinctive word.
+  const queryTokens = [...new Set([...titleTokens(rawPhrase), ...titleTokens(match && match.titleHint)])];
+  const candidates = queryTokens.length
+    ? dayEvents.filter((e) => { const t = String(e.title || "").toLowerCase(); return queryTokens.every((w) => t.includes(w)); })
+    : dayEvents;
   return { candidates, dayEvents, anchored, windowFromMs: fromMs, windowToMs: toMs };
 }
 
