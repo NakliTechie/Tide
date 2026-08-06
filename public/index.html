@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-KkeN75ZV55cvNF+Ym97K7+CScqp+pzwyPTN/PRSVPSs=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-EypbPsFF9HQoo44IComE1UixP9AMjNoayOlTiMBrMro=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -1381,6 +1381,7 @@
     else if (/\bnext month\b/.test(c)) { const n = new Date(now); range = [new Date(n.getFullYear(), n.getMonth() + 1, 1).getTime(), new Date(n.getFullYear(), n.getMonth() + 2, 1).getTime()]; }
     else if (/\bthis month\b/.test(c)) { const n = new Date(now); range = [new Date(n.getFullYear(), n.getMonth(), 1).getTime(), new Date(n.getFullYear(), n.getMonth() + 1, 1).getTime()]; }
     else { const dm = resolveHintDay(c, now); if (dm != null) range = [dm, dm + DAY_MS]; }
+    if (!range && /\b(morning|afternoon|evening|tonight)\b/.test(c)) range = [d0.getTime(), d0.getTime() + DAY_MS]; // bare part-of-day → today
     if (!range) return null;
     let [from, to] = range;
     // Time-of-day narrowing only makes sense within a single day.
@@ -1470,6 +1471,18 @@
       return { kind: "find_slot", durationMin: intent.durationMin, slots: slots || [] };
     }
 
+    // Bulk cancel — "clear my afternoon", "cancel everything tomorrow", "clear my
+    // calendar friday". Scope is a deterministic window (day ± part-of-day); the
+    // confirm lists every event that will go and needs an explicit click. Requires
+    // a resolvable scope — never bulk-delete without a clear day/range.
+    if (intent.intent === "cancel" && /\b(clear|wipe|empty|all|everything|every)\b/i.test(String(intent.raw || ""))) {
+      const scope = resolveRange(intent.raw, now);
+      if (!scope) return { kind: "cancel", bulk: true, candidates: [], notFound: true, needsConfirm: false };
+      const events = await ctx.agent.listEvents({ from: new Date(scope.fromMs).toISOString(), to: new Date(scope.toMs).toISOString() });
+      const targets = (Array.isArray(events) ? events : []).filter((e) => { const s = new Date(e.start).getTime(); return s >= scope.fromMs && s < scope.toMs; });
+      return { kind: "cancel", bulk: true, candidates: targets, scopeFromMs: scope.fromMs, scopeToMs: scope.toMs, needsConfirm: targets.length > 0, notFound: targets.length === 0 };
+    }
+
     if (intent.intent === "reschedule" || intent.intent === "cancel") {
       // For reschedule the phrase carries the DESTINATION time too ("move X to 4pm")
       // — split on "to" so only the target part ("move X") anchors the day/hour and
@@ -1536,6 +1549,12 @@
         start: new Date(p.newStartMs).toISOString(),
         end: p.newEndMs != null ? new Date(p.newEndMs).toISOString() : undefined,
       });
+    }
+    if (p.kind === "cancel" && p.bulk) {
+      const targets = p.candidates || [];
+      if (!targets.length) throw new Error("nothing to cancel");
+      for (const e of targets) await ctx.agent.deleteEvent({ id: e.id, calendarId: e.calendarId });
+      return { deleted: targets.length };
     }
     if (p.kind === "cancel") {
       if (!p.target) throw new Error("nothing to cancel");
@@ -3126,6 +3145,16 @@
         else slots.slice(0, 8).forEach((s) => preview.append(row(new Date(s.start).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }), `${fmtTime(new Date(s.start))} – ${fmtTime(new Date(s.end))}`)));
         return;
       }
+      if (p.kind === "cancel" && p.bulk) {
+        if (p.notFound || !p.candidates.length) { confirmBtn.disabled = true; preview.append(h("div", { class: "muted small", text: "Nothing to cancel in that range." })); return; }
+        const dayLbl = relDay(p.scopeFromMs);
+        const partOfDay = (p.scopeToMs - p.scopeFromMs) <= 8 * 3600000 ? ` ${fmtTime(new Date(p.scopeFromMs))}–${fmtTime(new Date(p.scopeToMs))}` : "";
+        confirmBtn.textContent = `Cancel ${p.candidates.length} event${p.candidates.length > 1 ? "s" : ""}`;
+        confirmBtn.classList.add("danger"); confirmBtn.disabled = false;
+        preview.append(h("div", { class: "muted small", text: `This deletes all ${p.candidates.length} event${p.candidates.length > 1 ? "s" : ""} — ${dayLbl.toLowerCase()}${partOfDay}. Click to confirm — Enter won't delete.` }));
+        p.candidates.slice(0, 20).forEach((e) => preview.append(row(`${relDay(new Date(e.start).getTime())} ${fmtTime(new Date(e.start))}`, e.title)));
+        return;
+      }
       if (p.kind === "reschedule" || p.kind === "cancel") {
         if (p.notFound) { confirmBtn.disabled = true; preview.append(h("div", { class: "muted small", text: "Couldn't find that event." })); return; }
         if (p.ambiguous || p.titleMissed) {
@@ -3208,8 +3237,8 @@
       const old = confirmBtn.textContent;
       confirmBtn.disabled = true; confirmBtn.textContent = "Working…";
       try {
-        await TalkMod.commit(p, { agent: window.tide.agent });
-        toast(p.kind === "cancel" ? "Event cancelled" : p.kind === "reschedule" ? "Event moved" : `Created “${p.draft.title}”`);
+        const r = await TalkMod.commit(p, { agent: window.tide.agent });
+        toast(p.bulk ? `Cancelled ${r.deleted} event${r.deleted !== 1 ? "s" : ""}` : p.kind === "cancel" ? "Event cancelled" : p.kind === "reschedule" ? "Event moved" : `Created “${p.draft.title}”`);
         closeModal();
         await loadEvents();
       } catch (err) {

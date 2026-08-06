@@ -377,6 +377,38 @@ test("plan cancel — several title matches (two identical titles) → pick-list
   assert.deepEqual(p.candidates.map((e) => e.id).sort(), ["p1", "p2"]); // both prep events, Standup excluded
 });
 
+test("plan cancel bulk — 'clear my afternoon tomorrow' → afternoon events only; commit deletes all", async () => {
+  const evs = [
+    { id: "m", calendarId: "c", title: "Standup", start: localISO(2026, 7, 6, 9, 0), end: localISO(2026, 7, 6, 9, 30) },
+    { id: "a1", calendarId: "c", title: "Review", start: localISO(2026, 7, 6, 14, 0), end: localISO(2026, 7, 6, 15, 0) },
+    { id: "a2", calendarId: "c", title: "Sync", start: localISO(2026, 7, 6, 16, 0), end: localISO(2026, 7, 6, 16, 30) },
+  ];
+  const calls = [];
+  const agent = {
+    async listEvents({ from, to }) { const f = +new Date(from), t = +new Date(to); return evs.filter((e) => { const s = +new Date(e.start); return s >= f && s < t; }); },
+    async deleteEvent(a) { calls.push(a.id); return { id: a.id, deleted: true }; },
+  };
+  const p = await plan({ intent: "cancel", raw: "clear my afternoon tomorrow", match: {} }, { agent, now: NOW });
+  assert.equal(p.bulk, true);
+  assert.deepEqual(p.candidates.map((e) => e.id).sort(), ["a1", "a2"]); // 9am excluded
+  assert.equal(p.needsConfirm, true);
+  const r = await commit(p, { agent });
+  assert.equal(r.deleted, 2);
+  assert.deepEqual(calls.sort(), ["a1", "a2"]);
+});
+
+test("plan cancel bulk — 'cancel everything tomorrow' → all of tomorrow, not today", async () => {
+  const evs = [
+    { id: "m", calendarId: "c", title: "Standup", start: localISO(2026, 7, 6, 9, 0), end: localISO(2026, 7, 6, 9, 30) },
+    { id: "a1", calendarId: "c", title: "Review", start: localISO(2026, 7, 6, 14, 0), end: localISO(2026, 7, 6, 15, 0) },
+    { id: "today", calendarId: "c", title: "X", start: localISO(2026, 7, 5, 10, 0), end: localISO(2026, 7, 5, 10, 30) },
+  ];
+  const agent = { async listEvents({ from, to }) { const f = +new Date(from), t = +new Date(to); return evs.filter((e) => { const s = +new Date(e.start); return s >= f && s < t; }); } };
+  const p = await plan({ intent: "cancel", raw: "cancel everything tomorrow", match: {} }, { agent, now: NOW });
+  assert.equal(p.bulk, true);
+  assert.deepEqual(p.candidates.map((e) => e.id).sort(), ["a1", "m"]);
+});
+
 test("disambiguate uses the model over the candidate set, null without a model", async () => {
   const cands = [{ id: "a", title: "Dentist" }, { id: "b", title: "Lunch" }];
   assert.equal((await disambiguate(cands, "dentist", { talk: Talk.fake() })).id, "a");

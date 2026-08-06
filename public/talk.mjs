@@ -636,6 +636,7 @@ export function resolveRange(text, now = Date.now()) {
   else if (/\bnext month\b/.test(c)) { const n = new Date(now); range = [new Date(n.getFullYear(), n.getMonth() + 1, 1).getTime(), new Date(n.getFullYear(), n.getMonth() + 2, 1).getTime()]; }
   else if (/\bthis month\b/.test(c)) { const n = new Date(now); range = [new Date(n.getFullYear(), n.getMonth(), 1).getTime(), new Date(n.getFullYear(), n.getMonth() + 1, 1).getTime()]; }
   else { const dm = resolveHintDay(c, now); if (dm != null) range = [dm, dm + DAY_MS]; }
+  if (!range && /\b(morning|afternoon|evening|tonight)\b/.test(c)) range = [d0.getTime(), d0.getTime() + DAY_MS]; // bare part-of-day → today
   if (!range) return null;
   let [from, to] = range;
   // Time-of-day narrowing only makes sense within a single day.
@@ -725,6 +726,18 @@ export async function plan(intent, ctx) {
     return { kind: "find_slot", durationMin: intent.durationMin, slots: slots || [] };
   }
 
+  // Bulk cancel — "clear my afternoon", "cancel everything tomorrow", "clear my
+  // calendar friday". Scope is a deterministic window (day ± part-of-day); the
+  // confirm lists every event that will go and needs an explicit click. Requires
+  // a resolvable scope — never bulk-delete without a clear day/range.
+  if (intent.intent === "cancel" && /\b(clear|wipe|empty|all|everything|every)\b/i.test(String(intent.raw || ""))) {
+    const scope = resolveRange(intent.raw, now);
+    if (!scope) return { kind: "cancel", bulk: true, candidates: [], notFound: true, needsConfirm: false };
+    const events = await ctx.agent.listEvents({ from: new Date(scope.fromMs).toISOString(), to: new Date(scope.toMs).toISOString() });
+    const targets = (Array.isArray(events) ? events : []).filter((e) => { const s = new Date(e.start).getTime(); return s >= scope.fromMs && s < scope.toMs; });
+    return { kind: "cancel", bulk: true, candidates: targets, scopeFromMs: scope.fromMs, scopeToMs: scope.toMs, needsConfirm: targets.length > 0, notFound: targets.length === 0 };
+  }
+
   if (intent.intent === "reschedule" || intent.intent === "cancel") {
     // For reschedule the phrase carries the DESTINATION time too ("move X to 4pm")
     // — split on "to" so only the target part ("move X") anchors the day/hour and
@@ -791,6 +804,12 @@ export async function commit(p, ctx) {
       start: new Date(p.newStartMs).toISOString(),
       end: p.newEndMs != null ? new Date(p.newEndMs).toISOString() : undefined,
     });
+  }
+  if (p.kind === "cancel" && p.bulk) {
+    const targets = p.candidates || [];
+    if (!targets.length) throw new Error("nothing to cancel");
+    for (const e of targets) await ctx.agent.deleteEvent({ id: e.id, calendarId: e.calendarId });
+    return { deleted: targets.length };
   }
   if (p.kind === "cancel") {
     if (!p.target) throw new Error("nothing to cancel");
