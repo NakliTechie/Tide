@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-tJ+lKIbXQvRAxvS4MBVwJXVmQPo3eSgQcyACmaGy8sw=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-GrsqSOHzfd0zv+MyNT8VBSB2bCYRRloW1FFoMLv+GT8=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -2870,6 +2870,7 @@
             await TalkMod.acquireLanguageModel((pct) => { prog.textContent = " " + pct + "%"; });
             talkState = await TalkMod.probeAvailability();
             renderEnable();
+            if (talkState === "available") talk().warm().catch(() => {}); // warm right after the download completes
             if (input.value.trim()) doParse(input.value);
           } catch (e) { btn.disabled = false; btn.textContent = "Enable on-device AI"; prog.textContent = " — unavailable"; }
         });
@@ -2883,7 +2884,7 @@
       command = matchCommand(text);
       if (command) { tierEl.textContent = "command"; renderPreview(); return; }
       if (!text.trim()) { renderPreview(); return; }
-      tierEl.textContent = "parsing…";
+      tierEl.textContent = talkState === "available" ? "thinking…" : "parsing…";
       if (talkState === "available") {
         try {
           const intent = await talk().parse(text);
@@ -3059,7 +3060,13 @@
 
     openModal(modal);
     renderPreview();
-    (async () => { try { talkState = await TalkMod.probeAvailability(); renderEnable(); } catch {} })();
+    (async () => {
+      try {
+        talkState = await TalkMod.probeAvailability();
+        renderEnable();
+        if (talkState === "available") talk().warm().catch(() => {}); // pre-load the session on open so the first ask is instant
+      } catch {}
+    })();
   }
 
   function debounce(fn, ms) {
