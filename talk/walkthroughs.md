@@ -160,7 +160,9 @@ come along.
 
 ## Question 5 — Safe mutation pipeline: disambiguation + confirm covenant
 
-> **Status:** ✅ LOCKED 2026-08-06. App resolves events deterministically (model hints only); 0→miss/1→staged/>1→pick-list; every mutation previews→confirms, `cancel` explicit. → SPEC A5.
+> **Status:** ✅ LOCKED 2026-08-06 · **revised 2026-08-06**. App pre-filters candidates deterministically; the model MAY disambiguate/summarize over that set under untrusted framing + a grounding guard; every mutation previews→confirms, `cancel` explicit. → SPEC A5.
+>
+> **Revision (owner):** the original lock kept the model away from event text entirely. Relaxed — the model may use event text where it helps (summaries, "the dentist" matching), made safe by three layers: (1) it only ever sees a candidate set the app already pre-filtered, never the whole calendar; (2) `normalizeChosenId` discards any chosen id the app didn't offer; (3) the confirm card is the final net on every mutation. The options table below is the pre-revision record.
 
 For `reschedule`/`cancel`, "my 2pm" / "the dentist" must resolve to *one* real event
 before anything happens — and mutations must be reviewable. This is where Full-CRUD

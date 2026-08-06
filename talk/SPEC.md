@@ -50,7 +50,10 @@ Calendar invite titles, descriptions, locations, and attendee names are
 event text MUST wrap it in explicit untrusted-data delimiters and instruct the model
 to treat it as data only, ignoring embedded instructions / role-changes / output
 formats (inlay's `readerTrustRules` pattern). Talk is always user-initiated from the
-command bar; event content can never auto-trigger a model call or an execution.
+command bar; event content can never auto-trigger a model call or an execution. v1
+**does** feed event text to the model (summaries + disambiguation, per revised A5) —
+always under this framing, always behind the `normalizeChosenId` grounding guard for
+mutations, always behind the confirm gate (I4).
 
 ### I4. Draft → preview → commit; nothing executes unconfirmed
 
@@ -103,16 +106,26 @@ model covering natural phrasing; the offset-bearing-ISO rule kills the classic
 tests); widen the hand-rolled parser before ever reaching for a library
 (→ DEFERRED trigger).
 
-### A5. Safe mutation pipeline — app resolves, then confirm (Q5)
+### A5. Safe mutation pipeline — app pre-filters, model may disambiguate, always confirm (Q5, revised 2026-08-06)
 
-**Choice:** for `reschedule`/`cancel`, the app filters `listEvents` by time then
-title (deterministic); 0 candidates → honest miss, 1 → staged, >1 → a user pick-list.
-The model supplies hints only, never picks the event. Every mutation stages a
-preview → confirm before touching the agent face; `cancel` requires an explicit
-(non-default) confirm. **Why:** keeps the destructive path deterministic and
-injection-resistant (I3) and always shows the user exactly which event moves/dies.
-**Implication:** small app-side matching code over an array Tide already holds;
-commit routes through `window.tide.agent.*`. Realizes invariant I4.
+**Choice:** for `reschedule`/`cancel`, the app first filters `listEvents` by the
+time window deterministically → a candidate set. 0 → honest miss; 1 → staged;
+>1 → the model MAY disambiguate by title, but only *within that pre-filtered
+candidate set*, with event text framed untrusted (I3) and a grounding guard
+(`normalizeChosenId`) that discards any id the app didn't offer; still ambiguous →
+a user pick-list. Query/summary MAY likewise feed events to the model (untrusted-
+framed, `buildEventSummaryPrompt`) for a natural-language answer. Every mutation
+stages a preview → confirm; `cancel` requires an explicit (non-default) confirm.
+**Why:** the deterministic pre-filter + the id grounding guard bound the model's
+blast radius, and the confirm card is the final net — the user always sees which
+event moves/dies, so even a mis-pick is caught before it lands.
+**Revised from the original "the model never sees events":** the owner opted to let
+the model use event text where it helps (summaries, "the dentist" matching); the
+untrusted framing + grounding guard + confirm gate make that safe.
+**Implication:** app-side candidate filtering +
+`buildDisambiguationPrompt`/`buildEventSummaryPrompt` +
+`normalizeChosenId` (all in `public/talk.mjs`); commit routes through
+`window.tide.agent.*`. Realizes invariant I4.
 
 ### A6. Availability — probe → progressive affordance (Q6)
 
