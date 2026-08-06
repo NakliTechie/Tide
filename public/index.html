@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-PDmahJ7/iuLAaZkVXKei80bK+pDRvg225YVWwdNjmeg=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-RikDrjEepsdkNbi1fKMSIWt9j434L4jWSPnzc6WKXSM=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -896,6 +896,14 @@
   const Auth = (() => {
     // conns: [{ id(sub), email, picture, refreshToken, token, expiresAt, needsReconnect }]
     let conns = [];
+    // primarySub: the stable Tide identity — the `sub` of the account designated
+    // primary (the first ever linked). Persisted explicitly so it never drifts
+    // with link order or account removal, unlike the old `conns[0]`. All private
+    // notes key to this identity via the session JWT below.
+    let primarySub = null;
+    // session: cached Tide session JWT { jwt, sub, exp(epoch s) }, minted from the
+    // primary account's Google token and reused across loads (survives in Vault).
+    let session = null;
 
     function clientConfigured() { return GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith("YOUR_"); }
     function redirectUri() { return location.origin + location.pathname; } // registered origin/path
@@ -964,6 +972,8 @@
       if (data.refresh_token) conn.refreshToken = data.refresh_token; // keep prior one if omitted
       applyAccess(conn, data);
       await persist();
+      await ensurePrimary();                       // first account linked becomes the Tide identity
+      if (conn.id === primarySub) await ensureSession(true); // mint immediately so notes work without a reload
       return conn;
     }
 
@@ -981,6 +991,36 @@
       })));
     }
 
+    // The primary account = the stable Tide identity. Resolved by the persisted
+    // primarySub, falling back to conns[0] only before one is designated.
+    function primaryConn() { return (primarySub && conns.find((c) => c.id === primarySub)) || conns[0] || null; }
+    async function ensurePrimary() {
+      if (!primarySub && conns[0]) { primarySub = conns[0].id; await Vault.set("tide.primarySub", primarySub); }
+      return primarySub;
+    }
+
+    // Mint (or reuse) the Tide session JWT that authenticates note ops. Cached in
+    // memory + Vault and reused across loads; re-minted when within 60s of expiry
+    // or when force=true (e.g. a note endpoint returned 401 on a rotated token).
+    // Returns the JWT, or null if no primary account / mint failed.
+    async function ensureSession(force = false) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (!force && session && session.jwt && session.exp - 60 > nowSec) return session.jwt;
+      const conn = primaryConn();
+      if (!conn) return null;
+      let tok;
+      try { tok = await tokenFor(conn); } catch { return null; }
+      try {
+        const r = await fetch("/api/session", { method: "POST", headers: { Authorization: "Bearer " + tok } });
+        if (!r.ok) return null;
+        const data = await r.json();
+        if (!data.session) return null;
+        session = { jwt: data.session, sub: data.sub, exp: data.exp };
+        await Vault.set("tide.session", session);
+        return session.jwt;
+      } catch { return null; }
+    }
+
     async function loadStored() {
       const stored = await Vault.get("connections");
       conns = (Array.isArray(stored) ? stored : []).map((c) => ({
@@ -988,6 +1028,8 @@
         refreshToken: c.refreshToken || null, token: null, expiresAt: 0,
         needsReconnect: !c.refreshToken,
       }));
+      primarySub = (await Vault.get("tide.primarySub")) || null;
+      session = (await Vault.get("tide.session")) || null;
       return conns.length > 0;
     }
 
@@ -1009,6 +1051,7 @@
         if (c.token && Date.now() < c.expiresAt) continue; // already fresh (e.g. just exchanged)
         try { await renew(c); } catch (e) { c.needsReconnect = true; console.warn("refresh failed for", c.email, e); }
       }
+      if (conns.length) { await ensurePrimary(); await ensureSession(); } // (re)mint the Tide session for note ops
       return conns.some((c) => c.token);
     }
 
@@ -1017,15 +1060,25 @@
       return renew(conn);
     }
 
-    async function removeAccount(id) { conns = conns.filter((c) => c.id !== id); await persist(); }
-    async function disconnectAll() { conns = []; await Vault.clearAll(); }
+    async function removeAccount(id) {
+      conns = conns.filter((c) => c.id !== id);
+      if (id === primarySub) {                 // primary removed — move the Tide identity to the next account
+        primarySub = conns[0] ? conns[0].id : null;
+        session = null;                        // old session belongs to the removed identity
+        await Vault.set("tide.primarySub", primarySub);
+        await Vault.set("tide.session", null);
+      }
+      await persist();
+    }
+    async function disconnectAll() { conns = []; primarySub = null; session = null; await Vault.clearAll(); }
 
     return {
       begin, handleRedirect, renew, tokenFor, warmup, loadStored, removeAccount, disconnectAll,
+      session: ensureSession, primaryConn, primarySub: () => primarySub,
       list: () => conns,
       byId: (id) => conns.find((c) => c.id === id) || null,
       isConnected: () => conns.length > 0,
-      account: () => (conns[0] ? { email: conns[0].email, sub: conns[0].id } : null),
+      account: () => { const p = primaryConn(); return p ? { email: p.email, sub: p.id } : null; },
       clientConfigured,
     };
   })();
@@ -1689,28 +1742,37 @@
     return frag;
   }
 
-  /* ---- Private notes API (Cloudflare KV via the Worker) ---------------- */
+  /* ---- Private notes API (Cloudflare KV via the Worker) ----------------
+   * Authenticated by the Tide session JWT (not a per-account Google token), so
+   * every note keys to the one stable Tide identity regardless of how many
+   * accounts are linked. On a 401 (token expired/rotated) we force a re-mint
+   * once and retry, so a stale cached session self-heals without a reload.   */
+  async function notesFetch(path, opts = {}, retry = true) {
+    const jwt = await Auth.session();
+    if (!jwt) throw new Error("no Tide session");
+    const r = await fetch(path, { ...opts, headers: { Authorization: "Bearer " + jwt, ...(opts.headers || {}) } });
+    if (r.status === 401 && retry) {
+      const fresh = await Auth.session(true); // force re-mint
+      if (fresh) return notesFetch(path, opts, false);
+    }
+    return r;
+  }
   const Notes = {
-    async get(conn, scope, id) {
-      const tok = await Auth.tokenFor(conn);
-      const r = await fetch(`/api/note?scope=${scope}&id=${encodeURIComponent(id)}`, {
-        headers: { Authorization: "Bearer " + tok },
-      });
+    async get(scope, id) {
+      const r = await notesFetch(`/api/note?scope=${scope}&id=${encodeURIComponent(id)}`);
       if (!r.ok) throw new Error("note get " + r.status);
       return (await r.json()).text || "";
     },
-    async put(conn, scope, id, text, label) {
-      const tok = await Auth.tokenFor(conn);
-      const r = await fetch("/api/note", {
+    async put(scope, id, text, label) {
+      const r = await notesFetch("/api/note", {
         method: "PUT",
-        headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ scope, id, text, label }),
       });
       if (!r.ok) throw new Error("note put " + r.status);
     },
-    async list(conn) {
-      const tok = await Auth.tokenFor(conn);
-      const r = await fetch("/api/notes", { headers: { Authorization: "Bearer " + tok } });
+    async list() {
+      const r = await notesFetch("/api/notes");
       if (!r.ok) throw new Error("notes list " + r.status);
       return (await r.json()).notes || [];
     },
@@ -1881,7 +1943,7 @@
         onSave: async (val) => {
           await Api.updateEvent(conn, e._calId, e.id, { description: val });
           e.description = val;
-          Notes.put(conn, "evt", e.id, val, e.summary || "(busy)").catch(() => {}); // aggregation index
+          Notes.put("evt", e.id, val, e.summary || "(busy)").catch(() => {}); // aggregation index
         },
       });
       flush = nf.flush;
@@ -1893,11 +1955,11 @@
         initial: "",
         placeholder: "Add a private note…",
         scopeChip: chip(ICON.lock, "Private note · read-only event"),
-        onSave: (val) => Notes.put(conn, "evt", e.id, val, e.summary || "(busy)"),
+        onSave: (val) => Notes.put("evt", e.id, val, e.summary || "(busy)"),
       });
       flush = nf.flush;
       notesRow.append(nf.node);
-      Notes.get(conn, "evt", e.id).then((t) => { const ta = nf.node.querySelector("textarea"); if (t && !ta.value) ta.value = t; }).catch(() => {});
+      Notes.get("evt", e.id).then((t) => { const ta = nf.node.querySelector("textarea"); if (t && !ta.value) ta.value = t; }).catch(() => {});
     }
 
     const foot = [];
@@ -1911,7 +1973,6 @@
 
   function openDayNote(date) { panelShow("day", { date }); }
   function viewDay(date) {
-    const conn = Auth.list()[0];
     const id = ymd(date);
     const body = h("div", {},
       h("div", { class: "detail-when", text: date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" }) }));
@@ -1920,11 +1981,11 @@
       initial: "",
       placeholder: "Notes for this day…",
       scopeChip: chip(ICON.lock, "Private day note"),
-      onSave: (val) => Notes.put(conn, "day", id, val, date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" })),
+      onSave: (val) => Notes.put("day", id, val, date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" })),
     });
     notesRow.append(nf.node);
     body.append(notesRow);
-    Notes.get(conn, "day", id).then((t) => { const ta = nf.node.querySelector("textarea"); if (t && !ta.value) ta.value = t; }).catch(() => {});
+    Notes.get("day", id).then((t) => { const ta = nf.node.querySelector("textarea"); if (t && !ta.value) ta.value = t; }).catch(() => {});
     return { node: detailShell({ title: date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }), body, foot: [] }), flush: nf.flush };
   }
 
@@ -1933,12 +1994,11 @@
   /* ---- Notes home: Scratchpad · All notes · Archive -------------------- */
   const SCRATCH_RETAIN_MS = 24 * 60 * 60 * 1000; // checked items linger ~1 day, then archive
   function openNotesPanel() {
-    if (!Auth.list()[0]) { toast("Connect an account to use Notes", "err"); return; }
+    if (!Auth.isConnected()) { toast("Connect an account to use Notes", "err"); return; }
     panelShow("notes", { tab: Panel.notesTab });
   }
   function viewNotes(activeTab) {
     Panel.notesTab = ["scratch", "all", "archive"].includes(activeTab) ? activeTab : "scratch";
-    const conn = Auth.list()[0];
     const bodyEl = h("div", { class: "detail-body" });
     const tabBar = h("div", { class: "notes-tabs" });
     const btns = {};
@@ -1955,8 +2015,8 @@
 
     let items = [];                 // active scratchpad items
     let curFlush = () => {};
-    const saveMain = debounce(() => Notes.put(conn, "list", "main", JSON.stringify(items)).catch(() => {}), 500);
-    function persistMainNow() { return Notes.put(conn, "list", "main", JSON.stringify(items)).catch(() => {}); }
+    const saveMain = debounce(() => Notes.put("list", "main", JSON.stringify(items)).catch(() => {}), 500);
+    function persistMainNow() { return Notes.put("list", "main", JSON.stringify(items)).catch(() => {}); }
 
     function renderTab(t) {
       curFlush = () => {};
@@ -1967,16 +2027,16 @@
 
     /* Scratchpad */
     async function archiveItems(expired) {
-      const t = await Notes.get(conn, "list", "archive").catch(() => "");
+      const t = await Notes.get("list", "archive").catch(() => "");
       let arch = []; try { arch = t ? JSON.parse(t) : []; } catch {} if (!Array.isArray(arch)) arch = [];
       const now = Date.now();
       for (const it of expired) arch.push({ id: it.id, text: it.text, doneAt: it.doneAt || now, archivedAt: now });
       if (arch.length > 500) arch = arch.slice(arch.length - 500);
-      await Notes.put(conn, "list", "archive", JSON.stringify(arch)).catch(() => {});
+      await Notes.put("list", "archive", JSON.stringify(arch)).catch(() => {});
     }
     function renderScratch() {
       bodyEl.replaceChildren(h("div", { class: "muted small", style: { padding: "6px 2px" }, text: "Loading…" }));
-      Notes.get(conn, "list", "main").then(async (t) => {
+      Notes.get("list", "main").then(async (t) => {
         try { items = t ? JSON.parse(t) : []; } catch { items = []; } if (!Array.isArray(items)) items = [];
         const now = Date.now();
         const expired = items.filter((i) => i.done && i.doneAt && (now - i.doneAt) > SCRATCH_RETAIN_MS);
@@ -2015,7 +2075,7 @@
     /* Archive: completed items, kept until trashed (or restored) */
     function renderArchive() {
       bodyEl.replaceChildren(h("div", { class: "muted small", style: { padding: "6px 2px" }, text: "Loading…" }));
-      Notes.get(conn, "list", "archive").then((t) => {
+      Notes.get("list", "archive").then((t) => {
         let arch = []; try { arch = t ? JSON.parse(t) : []; } catch {} if (!Array.isArray(arch)) arch = [];
         arch.sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
         bodyEl.replaceChildren();
@@ -2024,7 +2084,7 @@
             text: "Nothing archived yet. Completed scratchpad items land here after a day; trash to delete them for good." }));
           return;
         }
-        const saveArch = () => Notes.put(conn, "list", "archive", JSON.stringify(arch)).catch(() => {});
+        const saveArch = () => Notes.put("list", "archive", JSON.stringify(arch)).catch(() => {});
         const wrap = h("div", { class: "archive-list" });
         for (const it of arch) {
           const restore = h("button", { class: "iconbtn arch-act", title: "Restore to scratchpad", "aria-label": "Restore", html: ICON.restore });
@@ -2033,9 +2093,9 @@
           trash.addEventListener("click", async () => { arch = arch.filter((x) => x.id !== it.id); await saveArch(); row.remove(); if (!arch.length) renderArchive(); });
           restore.addEventListener("click", async () => {
             arch = arch.filter((x) => x.id !== it.id); await saveArch();
-            const mt = await Notes.get(conn, "list", "main").catch(() => ""); let main = []; try { main = mt ? JSON.parse(mt) : []; } catch {} if (!Array.isArray(main)) main = [];
+            const mt = await Notes.get("list", "main").catch(() => ""); let main = []; try { main = mt ? JSON.parse(mt) : []; } catch {} if (!Array.isArray(main)) main = [];
             main.push({ id: it.id, text: it.text, done: false, doneAt: null });
-            await Notes.put(conn, "list", "main", JSON.stringify(main)).catch(() => {});
+            await Notes.put("list", "main", JSON.stringify(main)).catch(() => {});
             items = main; row.remove(); if (!arch.length) renderArchive();
             toast("Restored to scratchpad");
           });
@@ -2048,7 +2108,7 @@
     /* All notes: aggregate saved day + event notes */
     function renderAll() {
       bodyEl.replaceChildren(h("div", { class: "muted small", style: { padding: "6px 2px" }, text: "Loading…" }));
-      Notes.list(conn).then((notes) => {
+      Notes.list().then((notes) => {
         bodyEl.replaceChildren();
         if (!notes.length) {
           bodyEl.append(h("div", { class: "muted small", style: { padding: "8px 2px", lineHeight: "1.5" },
@@ -2082,12 +2142,11 @@
     panelShow("evtnote", { n });
   }
   function viewEvtNote(n) {
-    const conn = Auth.list()[0];
     const body = h("div", {}, h("div", { class: "detail-when", text: "Saved note" }));
     const row = h("div", { class: "detail-row" }, h("div", { class: "lbl", text: "Note" }),
       h("div", { class: "detail-desc", text: "Loading…" }));
     body.append(row);
-    Notes.get(conn, "evt", n.id).then((t) => { row.querySelector(".detail-desc").textContent = t || "(empty)"; }).catch(() => {});
+    Notes.get("evt", n.id).then((t) => { row.querySelector(".detail-desc").textContent = t || "(empty)"; }).catch(() => {});
     return { node: detailShell({ title: n.label || "Event note", body, foot: [] }), flush: () => {} };
   }
 
