@@ -638,11 +638,14 @@ export async function plan(intent, ctx) {
 
   if (intent.intent === "reschedule" || intent.intent === "cancel") {
     const { candidates, dayEvents, anchored } = await resolveTargets(intent.match, ctx, intent.raw);
-    const hint = intent.match.titleHint || intent.match.timeHint;
+    // Safety (post-incident): a mutation auto-targets ONLY when there is exactly
+    // one candidate. The model's title extraction is unreliable (it drops the
+    // title, or the time), so we never let it auto-pick which event to change or
+    // delete — anything ambiguous becomes a pick-list the user chooses from.
     let target = null, list = candidates, titleMissed = false;
     if (candidates.length === 1) target = candidates[0];
-    else if (candidates.length > 1) target = await disambiguate(candidates, hint, ctx);
-    else if (anchored && dayEvents.length) { list = dayEvents; titleMissed = true; } // title matched nothing on that day → let the user pick from it
+    else if (candidates.length === 0 && anchored && dayEvents.length) { list = dayEvents; titleMissed = true; } // title matched nothing on that day → pick from it
+    // candidates.length > 1 → pick-list (target stays null); no model auto-pick.
     const out = {
       kind: intent.intent, match: intent.match, candidates: list, target, titleMissed,
       notFound: candidates.length === 0 && !(anchored && dayEvents.length),

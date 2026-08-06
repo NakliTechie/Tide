@@ -25,7 +25,7 @@
     img-src 'self' data: https://*.googleusercontent.com https://*.google.com;
     font-src 'self';
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'sha256-eFFjGJlRQ7v7orU9OeKFqu2Vsh08dDnpchejjIwo5QQ=' https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-0oREeJh+oMuvZ/fCOsZzNguzdzJwLLlGRYZAo7+cjQA=' https://cdn.jsdelivr.net;
     connect-src 'self'
       https://www.googleapis.com
       https://*.googleapis.com
@@ -1383,11 +1383,14 @@
 
     if (intent.intent === "reschedule" || intent.intent === "cancel") {
       const { candidates, dayEvents, anchored } = await resolveTargets(intent.match, ctx, intent.raw);
-      const hint = intent.match.titleHint || intent.match.timeHint;
+      // Safety (post-incident): a mutation auto-targets ONLY when there is exactly
+      // one candidate. The model's title extraction is unreliable (it drops the
+      // title, or the time), so we never let it auto-pick which event to change or
+      // delete — anything ambiguous becomes a pick-list the user chooses from.
       let target = null, list = candidates, titleMissed = false;
       if (candidates.length === 1) target = candidates[0];
-      else if (candidates.length > 1) target = await disambiguate(candidates, hint, ctx);
-      else if (anchored && dayEvents.length) { list = dayEvents; titleMissed = true; } // title matched nothing on that day → let the user pick from it
+      else if (candidates.length === 0 && anchored && dayEvents.length) { list = dayEvents; titleMissed = true; } // title matched nothing on that day → pick from it
+      // candidates.length > 1 → pick-list (target stays null); no model auto-pick.
       const out = {
         kind: intent.intent, match: intent.match, candidates: list, target, titleMissed,
         notFound: candidates.length === 0 && !(anchored && dayEvents.length),
