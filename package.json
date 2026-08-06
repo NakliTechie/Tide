@@ -4,8 +4,10 @@
   "private": true,
   "description": "Keyboard-first calendar over Google Calendar, on Cloudflare Workers.",
   "scripts": {
-    "dev": "wrangler dev --port 8788 --ip 127.0.0.1",
-    "predeploy": "node scripts/rehash-csp.mjs",
+    "dev": "npm run build && wrangler dev --port 8788 --ip 127.0.0.1",
+    "test": "node --test",
+    "build": "node scripts/inline-talk.mjs && node scripts/rehash-csp.mjs",
+    "predeploy": "npm run build",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
