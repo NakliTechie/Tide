@@ -294,6 +294,25 @@ test("resolveTargets resolves a bare day word (tomorrow) to that day, not the 14
   assert.equal((await resolveTargets({ timeHint: "August 6, 2026", titleHint: "scrum" }, { agent, now: NOW })).candidates[0].id, "tmrw-scrum");
 });
 
+test("plan cancel — model drops the time hint but the raw phrase carries the day; title miss → pick-list of that day", async () => {
+  // The exact live failure: "delete tomorrow's shop meeting" → model returns
+  // timeHint:null, titleHint:"shop meeting"; tomorrow has a "Shop" (not "shop
+  // meeting"). Must anchor on the raw phrase and offer tomorrow's events, never
+  // fall back to today or auto-delete a mismatch.
+  const tmrw = [
+    { id: "a", calendarId: "c", title: "Shop", start: localISO(2026, 7, 6, 9, 0), end: localISO(2026, 7, 6, 9, 30) },
+    { id: "b", calendarId: "c", title: "Daily Meeting", start: localISO(2026, 7, 6, 11, 0), end: localISO(2026, 7, 6, 11, 30) },
+    { id: "today-x", calendarId: "c", title: "Shop", start: localISO(2026, 7, 5, 9, 0), end: localISO(2026, 7, 5, 9, 30) },
+  ];
+  const agent = { async listEvents({ from, to }) { const f = +new Date(from), t = +new Date(to); return tmrw.filter((e) => { const s = +new Date(e.start); return s >= f && s < t; }); } };
+  const p = await plan({ intent: "cancel", raw: "delete tomorrow's shop meeting", match: { timeHint: null, titleHint: "shop meeting" } }, { agent, now: NOW });
+  assert.equal(p.notFound, false);
+  assert.equal(p.titleMissed, true);
+  assert.equal(p.target, null);          // never auto-target a title mismatch
+  assert.equal(p.needsConfirm, false);   // user must pick first
+  assert.deepEqual(p.candidates.map((e) => e.id).sort(), ["a", "b"]); // tomorrow's only — today's "Shop" excluded
+});
+
 test("disambiguate uses the model over the candidate set, null without a model", async () => {
   const cands = [{ id: "a", title: "Dentist" }, { id: "b", title: "Lunch" }];
   assert.equal((await disambiguate(cands, "dentist", { talk: Talk.fake() })).id, "a");

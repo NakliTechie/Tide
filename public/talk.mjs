@@ -574,34 +574,37 @@ function resolveHintDay(text, now) {
   return null;
 }
 
-export async function resolveTargets(match, ctx) {
+// Resolve which existing event(s) a reschedule/cancel refers to (A5). The DAY is
+// anchored on the raw user phrase FIRST — the small model routinely drops or
+// mislocates the time qualifier ("delete tomorrow's X" often comes back with a
+// null timeHint), but "tomorrow" is right there in what the user typed. The
+// model's timeHint is only a fallback. Returns the title-filtered candidates,
+// PLUS the full set of that day's events (so the surface can offer a pick-list
+// when the title matches nothing — better to let the user choose than to
+// guess), plus whether a day was anchored.
+export async function resolveTargets(match, ctx, rawPhrase = "") {
   const now = ctx.now ?? Date.now();
-  const hint = match && match.timeHint ? String(match.timeHint) : "";
-  const clockMs = hint ? resolveRelativeTime(hint, now) : null; // a precise instant (hint carries a clock)
-  const dayMs = hint ? resolveHintDay(hint, now) : null;        // a bare day word
+  const anchorText = [rawPhrase, match && match.timeHint].filter(Boolean).join(" ");
+  const clockMs = anchorText ? resolveRelativeTime(anchorText, now) : null;
+  const dayMs = anchorText ? resolveHintDay(anchorText, now) : null;
   const anchorMs = clockMs != null ? clockMs : dayMs;
-  const fromMs = anchorMs != null ? startOfLocalDay(anchorMs) : startOfLocalDay(now);
-  const toMs = anchorMs != null ? fromMs + DAY_MS : fromMs + 14 * DAY_MS;
+  const anchored = anchorMs != null;
+  const fromMs = anchored ? startOfLocalDay(anchorMs) : startOfLocalDay(now);
+  const toMs = anchored ? fromMs + DAY_MS : fromMs + 14 * DAY_MS;
   const events = await ctx.agent.listEvents({ from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() });
-  let cands = Array.isArray(events) ? events.slice() : [];
-  if (anchorMs != null) {
-    const byDay = cands.filter((e) => sameLocalDay(new Date(e.start).getTime(), anchorMs));
+  const all = Array.isArray(events) ? events.slice() : [];
+  let dayEvents = all;
+  if (anchored) {
+    dayEvents = all.filter((e) => sameLocalDay(new Date(e.start).getTime(), anchorMs));
     if (clockMs != null) {
       const hh = new Date(clockMs).getHours();
-      const byHour = byDay.filter((e) => new Date(e.start).getHours() === hh);
-      cands = byHour.length ? byHour : (byDay.length ? byDay : cands);
-    } else {
-      cands = byDay.length ? byDay : cands; // day-only hint → that whole day
+      const byHour = dayEvents.filter((e) => new Date(e.start).getHours() === hh);
+      if (byHour.length) dayEvents = byHour; // narrow to the hour only if it hits
     }
+    if (!dayEvents.length) dayEvents = all;
   }
-  if (match && match.titleHint) {
-    const narrowed = cands.filter((e) => titleMatches(e, match.titleHint));
-    // Title is authoritative when it's the only signal (may narrow to 0 →
-    // notFound); with a day/time hint anchoring the window, only apply the title
-    // filter if it matched something (the hint may be imperfect).
-    if (narrowed.length || anchorMs == null) cands = narrowed;
-  }
-  return { candidates: cands, windowFromMs: fromMs, windowToMs: toMs };
+  const candidates = match && match.titleHint ? dayEvents.filter((e) => titleMatches(e, match.titleHint)) : dayEvents;
+  return { candidates, dayEvents, anchored, windowFromMs: fromMs, windowToMs: toMs };
 }
 
 // Ask the model to pick WHICH pre-filtered candidate (A5/I3). No model, or no
@@ -634,12 +637,16 @@ export async function plan(intent, ctx) {
   }
 
   if (intent.intent === "reschedule" || intent.intent === "cancel") {
-    const { candidates } = await resolveTargets(intent.match, ctx);
-    let target = candidates.length === 1 ? candidates[0] : null;
-    if (!target && candidates.length > 1) target = await disambiguate(candidates, intent.match.titleHint || intent.match.timeHint, ctx);
+    const { candidates, dayEvents, anchored } = await resolveTargets(intent.match, ctx, intent.raw);
+    const hint = intent.match.titleHint || intent.match.timeHint;
+    let target = null, list = candidates, titleMissed = false;
+    if (candidates.length === 1) target = candidates[0];
+    else if (candidates.length > 1) target = await disambiguate(candidates, hint, ctx);
+    else if (anchored && dayEvents.length) { list = dayEvents; titleMissed = true; } // title matched nothing on that day → let the user pick from it
     const out = {
-      kind: intent.intent, match: intent.match, candidates, target,
-      notFound: candidates.length === 0, ambiguous: !target && candidates.length > 1,
+      kind: intent.intent, match: intent.match, candidates: list, target, titleMissed,
+      notFound: candidates.length === 0 && !(anchored && dayEvents.length),
+      ambiguous: !target && list.length > 1,
     };
     if (intent.intent === "reschedule") {
       out.newStartMs = intent.newStartMs;
